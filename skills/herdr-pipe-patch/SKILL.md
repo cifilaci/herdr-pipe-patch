@@ -155,6 +155,8 @@ be stopped before it lets go of the old environment: `codex app-server daemon st
 `verify` checks the live descriptor and the codex side. `-Probe` runs a real
 sandboxed client (`codex sandbox -c windows.sandbox=elevated <hc> ls --json`) and
 fails if it cannot reach the core — that is the end-to-end proof, not an inference.
+It also fails if the probe could not run at all (no `codex` on `PATH`): a probe
+that did not run is not a proof, and the command must not claim one.
 
 ### 6. Take it back
 
@@ -206,7 +208,9 @@ which copies it into `~/.codex/skills/herdr/` and `~/.claude/skills/herdr/`.
 On a **WSL** machine that talks to a Windows Herdr App, use the shell installer
 instead — it writes the guide for the core *on that machine*, with the WSL head
 (the two cores, `win-hc`), and puts the `win-hc` wrapper in `~/.local/bin/`, so
-a WSL-side agent can reach the Windows core's terminals and agents:
+a WSL-side agent can reach the Windows core's terminals and agents. That folder
+has to be on `PATH` for `win-hc` to be found (`export PATH="$HOME/.local/bin:$PATH"`);
+the installer says so when it is not:
 
 ```sh
 sh install-skill-wsl.sh

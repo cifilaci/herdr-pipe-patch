@@ -86,15 +86,33 @@ function Install-PipePatchSkill {
     }
 }
 
+function Find-Binary {
+    param([string] $Name, [string[]] $Folders)
+    # PATH first, then the folders the programs are installed into: a cargo
+    # install or a portable copy is found too, not only the fixed path.
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    foreach ($folder in $Folders) {
+        $candidate = Join-Path $folder $Name
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return $null
+}
+
 function Install-HerdrGuide {
     param([string[]] $Folders)
 
-    $hc = Join-Path $env:LOCALAPPDATA 'Programs\herdr-core\herdr-core.exe'
-    if (-not (Test-Path -LiteralPath $hc)) { $hc = $null }
-    $app = Join-Path $env:LOCALAPPDATA 'Programs\herdr-app\herdr-app.exe'
-    if (-not (Test-Path -LiteralPath $app)) { $app = $null }
+    $coreFolders = @((Join-Path $env:LOCALAPPDATA 'Programs\herdr-core'))
+    $appFolders = @((Join-Path $env:LOCALAPPDATA 'Programs\herdr-app'))
+    $hc = Find-Binary -Name 'herdr-core.exe' -Folders $coreFolders
+    if (-not $hc) { $hc = Find-Binary -Name 'hc.exe' -Folders $coreFolders }
+    $app = Find-Binary -Name 'herdr-app.exe' -Folders $appFolders
     if (-not $hc -or -not $app) {
-        Write-Fail 'herdr-core and herdr-app have to be installed for the guide: it is built from the manuals those binaries print.'
+        # Name the one that is missing, and where it was looked for.
+        $missing = @()
+        if (-not $hc) { $missing += 'herdr-core (herdr-core.exe or hc.exe)' }
+        if (-not $app) { $missing += 'herdr-app (herdr-app.exe)' }
+        Write-Fail "the guide needs $($missing -join ' and '): it is built from the manuals those binaries print. Looked on PATH and in $env:LOCALAPPDATA\Programs."
     }
 
     $hcManual = Get-ProgramOutput -File $hc -Arguments @('--skill')

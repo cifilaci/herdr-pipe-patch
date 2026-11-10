@@ -147,6 +147,13 @@ It writes the guide into `~/.claude/skills/herdr/` and `~/.codex/skills/herdr/`
 `win-hc` wrapper into `~/.local/bin/`, so a WSL-side agent can reach the
 Windows core's terminals and agents too.
 
+`~/.local/bin` has to be on `PATH` for `win-hc` to be found. The installer says
+so when it is not, and the remedy is one line:
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 ---
 
 ## Use
@@ -196,7 +203,7 @@ matches `-AccountPattern` (default `CodexSandbox*`).
 | `-Version <v>` | The version for `build`. |
 | `-DryRun` | Print the plan, change nothing. |
 | `-Quiet` | Only the errors and the warnings. |
-| `-Probe` | Also drive the core from a sandbox (needs `codex` on `PATH`). |
+| `-Probe` | Also drive the core from a sandbox (needs `codex` on `PATH`). The command fails if the probe cannot run, and if the sandboxed client cannot reach the core. |
 | `-ReleasesUrl <url>` | Where `unpatch` downloads the stock core from. Default `https://releases.herdr.dev`. |
 | `-Repo <path>` | An existing herdr-core clone to build in. |
 | `-WorkDir <path>` | Where the build happens. |

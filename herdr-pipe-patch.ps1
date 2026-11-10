@@ -559,7 +559,11 @@ function Invoke-Probe {
     param([string] $Hc)
     Write-Step 'probe: driving the core from a sandbox'
     $codex = Get-Command codex -ErrorAction SilentlyContinue
-    if (-not $codex) { Write-Warn 'codex is not on PATH; the sandbox probe was skipped'; return }
+    if (-not $codex) {
+        # The probe was asked for and could not run. A probe that did not run
+        # is not a proof, so the command must not report success.
+        Stop-Tool 'the sandbox probe could not run: codex is not on PATH. Install codex, or leave -Probe out.'
+    }
     Write-Note "codex: $($codex.Source)"
     $r = Invoke-Native -File $codex.Source -Arguments @('sandbox', '-c', 'windows.sandbox=elevated', $Hc, 'ls', '--json')
     $code = $r.ExitCode
@@ -1291,12 +1295,17 @@ try {
 }
 
 $grant = @(Resolve-TargetSids)
-if ($grant.Count -eq 0 -and $Command -ne 'status') {
-    if (@($Account).Count -eq 0) {
-        Write-Warn "no principals to grant were found (looked for accounts matching '$AccountPattern'). Give -Account or -Sids."
+# Two different situations look the same from here: the pattern matched no
+# account, or the sandbox accounts do not exist on this machine at all. They
+# need different advice, so they are told apart. `apply` says its own thing.
+if ($grant.Count -eq 0 -and $Command -ne 'status' -and $Command -ne 'apply') {
+    $sandboxAccounts = @(Get-CodexSandboxAccounts)
+    if ($sandboxAccounts.Count -eq 0) {
+        Write-Warn 'the accounts the elevated sandbox runs as do not exist on this machine yet; run this in an elevated terminal:'
+        Write-Warn '  codex sandbox setup --elevated --current-user'
+    } else {
+        Write-Warn "no account on this machine matches what was asked for. Give -Account or -Sids."
     }
-    Write-Warn 'the accounts the elevated sandbox runs as do not exist on this machine yet; run this in an elevated terminal:'
-    Write-Warn '  codex sandbox setup --elevated --current-user'
 }
 
 switch ($Command) {
@@ -1326,10 +1335,35 @@ switch ($Command) {
 
     'apply' {
         if (-not $hc) { Stop-Tool 'no herdr-core found on this machine.' }
-        if ($grant.Count -eq 0) {
-            Write-Note 'the accounts the elevated sandbox runs as do not exist on this machine yet:'
-            Write-Note '  codex sandbox setup --elevated --current-user   # in an elevated terminal'
-            Stop-Tool 'nothing to grant yet. Run the command above, then apply again.'
+        # No accounts to grant is not a dead end: the patched core does not need
+        # them. The core goes in, and the person is told to provision the
+        # sandbox and run apply again for the grants.
+        $noGrants = ($grant.Count -eq 0)
+        if ($noGrants) {
+            Write-Warn 'there is nothing to grant: no account on this machine matches what was asked for.'
+            Write-Warn 'the patched core goes in anyway - it does not need the accounts.'
+            Write-Warn 'if the elevated sandbox is not set up yet, run this in an elevated terminal:'
+            Write-Warn '  codex sandbox setup --elevated --current-user'
+            Write-Warn 'and run apply again afterwards, to grant the sandbox accounts.'
+        }
+
+        # The SIDs the installed core will actually grant. This is worked out
+        # before the candidate is checked, so the candidate is proved against
+        # the very SIDs the new core will carry.
+        $grantSids = @($grant)
+        $grantValue = ($grantSids -join ';')
+        if ($noGrants) {
+            $existing = [Environment]::GetEnvironmentVariable($script:EnvVar, 'User')
+            if ($existing) {
+                # The variable keeps what it had: an empty grant list must not
+                # clear the grants that are already in place.
+                $grantValue = $existing
+                $grantSids = @($existing -split ';' | Where-Object { $_ })
+                Write-Note "nothing was named to grant; the grants already in place are kept: $existing"
+            } else {
+                $grantValue = ''
+                Write-Note 'there is no variable set either: the core will grant SYSTEM and its owner, and nobody else'
+            }
         }
 
         $s = Show-Status -Hc $hc -GrantSids $grant
@@ -1341,7 +1375,7 @@ switch ($Command) {
         } else {
             Write-Note 'the core is already patched; only the variable and a restart are needed'
         }
-        Write-Note "grant: $($grant -join ', ')"
+        if (-not $noGrants) { Write-Note "grant: $($grant -join ', ')" }
         Write-Note "restart the core so it reads $script:EnvVar"
 
         if ($DryRun) {
@@ -1351,10 +1385,10 @@ switch ($Command) {
         }
 
         if (-not $s.Patched) {
-            $candidate = Get-PatchedCore -WantedVersion $installedVersion -GrantSids $grant -AllowBuild
+            $candidate = Get-PatchedCore -WantedVersion $installedVersion -GrantSids $grantSids -AllowBuild
 
             Write-Step 'checking the candidate grants the SIDs before installing it'
-            $check = Test-CandidateBinary -Candidate $candidate -GrantSids $grant
+            $check = Test-CandidateBinary -Candidate $candidate -GrantSids $grantSids
             if (-not $check.Ok) {
                 Stop-Tool "the candidate does not grant $($check.Missing -join ', '). It was not installed."
             }
@@ -1371,12 +1405,16 @@ switch ($Command) {
         }
 
         Write-Step "setting $script:EnvVar"
-        Set-UserEnvironment -Name $script:EnvVar -Value ($grant -join ';')
-        Set-Item -Path "Env:$script:EnvVar" -Value ($grant -join ';')
-        Write-Note "user environment: $($grant -join ';')"
+        if ($noGrants) {
+            Write-Note "left as it is: $(if ($grantValue) { $grantValue } else { 'not set' })"
+        } else {
+            Set-UserEnvironment -Name $script:EnvVar -Value $grantValue
+            Set-Item -Path "Env:$script:EnvVar" -Value $grantValue
+            Write-Note "user environment: $grantValue"
+        }
 
         Write-Step 'restarting the core'
-        $restart = Restart-Core -Hc $hc -Environment @{ $script:EnvVar = ($grant -join ';') } -ForSession $Session -Fresh
+        $restart = Restart-Core -Hc $hc -Environment @{ $script:EnvVar = $grantValue } -ForSession $Session -Fresh
         if (-not $restart.Ok) { Stop-Tool "the core did not come back: $($restart.Result.Text)" }
         Write-Note "restarted with: $($restart.How)"
         Start-Sleep -Milliseconds 1200
@@ -1390,8 +1428,12 @@ switch ($Command) {
         $missing = @()
         foreach ($x in $grant) { if (-not $granted.Contains($x)) { $missing += $x } }
         if ($missing.Count -gt 0) { Stop-Tool "the pipe still does not grant: $($missing -join ', ')" }
-        Write-Log 'done: the core is patched and the principals are granted' 'step'
         if ($Probe) { Invoke-Probe -Hc $hc }
+        if ($noGrants) {
+            Write-Log 'done: the core is patched; there are no accounts to grant yet' 'step'
+        } else {
+            Write-Log 'done: the core is patched and the principals are granted' 'step'
+        }
         exit 0
     }
 
@@ -1460,8 +1502,11 @@ switch ($Command) {
             foreach ($p in $problems) { Write-Fail $p }
             exit 1
         }
-        Write-Log 'verified' 'step'
+        # The probe runs before the verdict: a verdict that says "verified"
+        # while the proof is still to come would be printed before a probe
+        # that might fail.
         if ($Probe) { Invoke-Probe -Hc $hc }
+        Write-Log 'verified' 'step'
         exit 0
     }
 }
