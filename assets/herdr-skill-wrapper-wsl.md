@@ -28,8 +28,14 @@ win-hc keys t1y enter           # submit it
 win-hc read t1y                 # read the answer
 ```
 
-`send` pastes the text; it does **not** submit it. Always follow it with
-`keys <t> enter`, or the agent never sees the message.
+`send` pastes the text **and submits it** - the message is delivered. Do not
+follow it with `keys <t> enter`: that submits an empty turn. `keys` is for
+what `send` cannot do - a trust dialog (`hc keys <t> down enter`), an
+interrupt, a control key.
+
+If a send answers "nothing was typed", nothing was lost: that is a status
+guard, because the target was busy or silent rather than idle. Send to a
+working agent with `--if working`, or type anyway with `--force`.
 
 ## Check that you are inside Herdr
 
@@ -68,6 +74,27 @@ A message that arrives from the other machine arrives wrapped:
 ```
 
 The address in `from` names the sender: its machine and its terminal. Answer
-it the same way the question was asked - `send` then `keys enter` - through the
-core that owns it: `win-hc send t21 ...` when the sender is on the Windows
-host, `hc send herdr-wsl/t2 ...` when it is on this one.
+it the same way the question was asked - `send` - through the core that owns
+it: `win-hc send t21 ...` when the sender is on the Windows host,
+`hc send herdr-wsl/t2 ...` when it is on this one.
+
+The answer arrives on its own, as the next thing you are given. There is
+nothing to poll for: while the target is working, `hc read` returns only the
+screen.
+
+## A machine link reaches only its own terminals
+
+A peer link (`herdr-wsl/t2`) reaches the terminals **that machine started
+itself**. The App's own terminals are not the peers' terminals:
+
+```
+hc get herdr-wsl/t1y
+  -> denied: herdr-wsl may only reach the terminals here that started its own
+```
+
+Adding the Windows host over ssh does not change that: it would let the WSL
+side start terminals there, not reach the App's.
+
+So a request for an App terminal goes through the core that owns it - the
+Windows one, with `win-hc`. `win-hc` runs the Windows binary from WSL, so the
+request is local to that core and the rule does not apply.

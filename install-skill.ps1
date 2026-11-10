@@ -115,6 +115,11 @@ function Install-HerdrGuide {
             Write-Note "kept the old guide as $backup"
         }
         [IO.File]::WriteAllText($file, $guide, [System.Text.UTF8Encoding]::new($false))
+        # The head for this side must not send the agent to win-hc: that command
+        # does not exist here. The WSL head is the other side's.
+        if ($guide.Contains('win-hc')) {
+            Write-Fail "the guide written into $file names win-hc: that is the WSL head, not the one for this side"
+        }
         Write-Note "wrote the Herdr guide into $file"
     }
 }

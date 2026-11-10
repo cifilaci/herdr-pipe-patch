@@ -794,6 +794,18 @@ function Get-PatchedCore {
 
 function Get-CodexHome { return (Join-Path $env:USERPROFILE '.codex') }
 
+function Get-AgentHome {
+    <#
+      Where an agent keeps its skills. Codex reads ~/.codex/skills, Claude Code
+      reads ~/.claude/skills. A guide that is right for one agent and missing
+      for the other leaves that session without one - and a session without the
+      guide stops, saying it is not inside Herdr.
+    #>
+    param([ValidateSet('codex', 'claude')] [string] $Agent)
+    if ($Agent -eq 'codex') { return (Get-CodexHome) }
+    return (Join-Path $env:USERPROFILE '.claude')
+}
+
 function Get-CodexConfigValue {
     <#
       One key out of ~/.codex/config.toml. It is TOML, but only a few keys matter
@@ -924,19 +936,21 @@ function Get-HerdrAppPath {
 
 function Get-CodexSkill {
     <#
-      The codex skill this tool's counterpart lives in: is it there, does it gate
-      on the right thing, and does it still carry the manuals the installed
-      binaries print?
+      The Herdr guide an agent reads: is it there, does it gate on the right
+      thing, does it carry the manuals the installed binaries print, and is it
+      the head for this side of the machine?
     #>
-    param([string] $Hc)
-    $path = Join-Path (Join-Path (Get-CodexHome) 'skills\herdr') 'SKILL.md'
+    param([string] $Hc, [string] $Agent = 'codex')
+    $path = Join-Path (Join-Path (Get-AgentHome -Agent $Agent) 'skills\herdr') 'SKILL.md'
     $state = [pscustomobject]@{
+        Agent         = $Agent
         Path          = $path
         Exists        = $false
         GatesTerminal = $false
         GatesHerdrEnv = $false
         HcUpToDate    = $false
         AppUpToDate   = $false
+        MentionsWinHc = $false
         Wrapper       = ''
         Text          = ''
     }
@@ -946,6 +960,10 @@ function Get-CodexSkill {
     $state.Text = $text
     $state.GatesTerminal = $text.Contains('test -n "${HC_TERMINAL_ID:-}"')
     $state.GatesHerdrEnv = $text.Contains('"${HERDR_ENV:-}" = 1')
+    # The WSL head tells the agent to drive the Windows core with win-hc. On
+    # this side that is the wrong head: the guide would send the agent to a
+    # command that does not exist here.
+    $state.MentionsWinHc = $text.Contains('win-hc')
 
     $index = $text.IndexOf('# hc manual (herdr-core)')
     if ($index -gt 0) { $state.Wrapper = $text.Substring(0, $index) }
@@ -974,12 +992,24 @@ function Update-CodexSkill {
       about HERDR_ENV - is a local addition, so it is taken from the installed
       file rather than written again here.
     #>
-    param([string] $Hc)
-    $skill = Get-CodexSkill -Hc $Hc
+    param([string] $Hc, [string] $Agent = 'codex')
+    $skill = Get-CodexSkill -Hc $Hc -Agent $Agent
     if (-not $skill.Exists) { return $false }
     if (-not $skill.Wrapper) {
         Write-Fail 'the installed skill has no recognisable head; not rewriting it.'
         return $false
+    }
+    $head = $skill.Wrapper
+    if ($skill.MentionsWinHc) {
+        # The installed guide carries the WSL head. The head for this side is
+        # in the tool's own assets folder.
+        $windowsHead = Join-Path (Join-Path $script:ToolRoot 'assets') 'herdr-skill-wrapper.md'
+        if (Test-Path -LiteralPath $windowsHead) {
+            $head = ([IO.File]::ReadAllText($windowsHead) -replace "`r`n", "`n").Trim()
+            Write-Note 'the installed guide carried the WSL head; the head for this side replaces it'
+        } else {
+            Write-Warn 'the installed guide carries the WSL head and the head for this side is not beside the tool; the head is kept as it is'
+        }
     }
     $app = Get-HerdrAppPath
     if (-not $app) { Write-Fail 'herdr-app was not found, so the app manual cannot be read.'; return $false }
@@ -988,12 +1018,37 @@ function Update-CodexSkill {
     $appText = (Invoke-Native -File $app -Arguments @('--skill')).Text
     if (-not $hcText -or -not $appText) { Write-Fail 'a manual could not be read; not rewriting the skill.'; return $false }
 
-    $new = $skill.Wrapper + ($hcText -replace "`r`n", "`n").Trim() + "`n---`n`n" + ($appText -replace "`r`n", "`n").Trim() + "`n"
+    $new = $head + ($hcText -replace "`r`n", "`n").Trim() + "`n---`n`n" + ($appText -replace "`r`n", "`n").Trim() + "`n"
     $backup = $skill.Path + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
     Copy-Item -LiteralPath $skill.Path -Destination $backup -Force
     [IO.File]::WriteAllText($skill.Path, $new, [System.Text.UTF8Encoding]::new($false))
     Write-Note "saved the old skill as $backup"
     return $true
+}
+
+function Get-SkillProblems {
+    <#
+      What one agent's guide looks like, and what is wrong with it. Codex reads
+      ~/.codex/skills, Claude Code reads ~/.claude/skills: both are checked,
+      because a guide that is right for one and missing for the other leaves
+      that session without one.
+    #>
+    param([string] $Agent, $Skill)
+    $problems = New-Object System.Collections.Generic.List[string]
+    Write-Note "skill           : $(if ($Skill.Exists) { $Skill.Path } else { 'not installed' })"
+    if (-not $Skill.Exists) {
+        $problems.Add("$Agent has no herdr skill installed")
+        return $problems
+    }
+    Write-Note "gate            : $(if ($Skill.GatesHerdrEnv) { 'HERDR_ENV (the 0.9.5 guide)' } elseif ($Skill.GatesTerminal) { 'HC_TERMINAL_ID' } else { 'unknown' })"
+    Write-Note "hc manual       : $(if ($Skill.HcUpToDate) { 'up to date' } else { 'older than the installed core' })"
+    Write-Note "app manual      : $(if ($Skill.AppUpToDate) { 'up to date' } else { 'older than the installed app' })"
+    if ($Skill.GatesHerdrEnv) { $problems.Add("the $Agent skill gates on HERDR_ENV; that guide belongs to the older herdr and stops the agent") }
+    if (-not $Skill.GatesTerminal) { $problems.Add("the $Agent skill does not gate on HC_TERMINAL_ID") }
+    if (-not $Skill.HcUpToDate) { $problems.Add("the $Agent skill carries an older hc manual than the installed core") }
+    if (-not $Skill.AppUpToDate) { $problems.Add("the $Agent skill carries an older herdr-app manual than the installed app") }
+    if ($Skill.MentionsWinHc) { $problems.Add("the $Agent skill on this side carries the WSL head; it sends the agent to win-hc, which does not exist here") }
+    return $problems
 }
 
 function Show-Codex {
@@ -1053,19 +1108,12 @@ function Show-Codex {
         }
     }
 
-    $skill = Get-CodexSkill -Hc $Hc
-    Write-Note "skill           : $(if ($skill.Exists) { $skill.Path } else { 'not installed' })"
-    if (-not $skill.Exists) {
-        $problems.Add('codex has no herdr skill installed')
-    } else {
-        Write-Note "gate            : $(if ($skill.GatesHerdrEnv) { 'HERDR_ENV (the 0.9.5 guide)' } elseif ($skill.GatesTerminal) { 'HC_TERMINAL_ID' } else { 'unknown' })"
-        Write-Note "hc manual       : $(if ($skill.HcUpToDate) { 'up to date' } else { 'older than the installed core' })"
-        Write-Note "app manual      : $(if ($skill.AppUpToDate) { 'up to date' } else { 'older than the installed app' })"
-        if ($skill.GatesHerdrEnv) { $problems.Add('the codex skill gates on HERDR_ENV; that guide belongs to the older herdr and stops the agent') }
-        if (-not $skill.GatesTerminal) { $problems.Add('the codex skill does not gate on HC_TERMINAL_ID') }
-        if (-not $skill.HcUpToDate) { $problems.Add('the codex skill carries an older hc manual than the installed core') }
-        if (-not $skill.AppUpToDate) { $problems.Add('the codex skill carries an older herdr-app manual than the installed app') }
-    }
+    $skill = Get-CodexSkill -Hc $Hc -Agent 'codex'
+    foreach ($problem in (Get-SkillProblems -Agent 'codex' -Skill $skill)) { $problems.Add($problem) }
+
+    Write-Log 'claude code' 'step'
+    $claudeSkill = Get-CodexSkill -Hc $Hc -Agent 'claude'
+    foreach ($problem in (Get-SkillProblems -Agent 'Claude Code' -Skill $claudeSkill)) { $problems.Add($problem) }
 
     return [pscustomobject]@{
         Problems = $problems
@@ -1105,9 +1153,11 @@ function Repair-Codex {
     if ($daemonAutoStart -ne 'false') {
         Write-Note 'config.toml: features.daemon_auto_start -> false'
     }
-    $skill = Get-CodexSkill -Hc $Hc
-    if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate)) {
-        Write-Note 'codex skill: rebuild it from the manuals the installed binaries print'
+    foreach ($agent in @('codex', 'claude')) {
+        $skill = Get-CodexSkill -Hc $Hc -Agent $agent
+        if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc)) {
+            Write-Note "$agent skill: rebuild it from the manuals the installed binaries print"
+        }
     }
     if (-not $haveAccounts) {
         Write-Note 'the elevated sandbox is not provisioned - run this in an elevated terminal:'
@@ -1130,9 +1180,11 @@ function Repair-Codex {
             Write-Note 'daemon_auto_start is now false'
         }
     }
-    $skill = Get-CodexSkill -Hc $Hc
-    if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate)) {
-        if (Update-CodexSkill -Hc $Hc) { Write-Note 'the codex skill now carries the current manuals' }
+    foreach ($agent in @('codex', 'claude')) {
+        $skill = Get-CodexSkill -Hc $Hc -Agent $agent
+        if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc)) {
+            if (Update-CodexSkill -Hc $Hc -Agent $agent) { Write-Note "the $agent skill now carries the current manuals" }
+        }
     }
 }
 

@@ -69,11 +69,18 @@ $(printf '%s' "$manual" | tr -d '\r')
         mkdir -p "$folder"
         file="$folder/SKILL.md"
         if [ -f "$file" ]; then
+            if ! grep -q 'win-hc' "$file"; then
+                say "    the old guide does not mention win-hc: it was the wrong head for this side"
+            fi
             cp "$file" "$file.bak-$(date +%Y%m%d-%H%M%S)"
             say "    kept the old guide as $file.bak-$(date +%Y%m%d-%H%M%S)"
         fi
         printf '%s\n' "$guide" > "$file"
-        say "    wrote the guide into $file"
+        if grep -q 'win-hc' "$file"; then
+            say "    wrote the guide into $file (it names win-hc: the head for this side)"
+        else
+            fail "the guide written into $file does not mention win-hc: the head is wrong"
+        fi
     done
 }
 

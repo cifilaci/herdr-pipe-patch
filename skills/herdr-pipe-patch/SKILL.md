@@ -166,16 +166,32 @@ the grants are gone.
 ## The Herdr skill for codex and Claude Code
 
 The Herdr skill is a separate thing from this patch: it is the guide an agent reads
-to drive Herdr. It goes into `~/.codex/skills/herdr/` and `~/.claude/skills/herdr/`.
+to drive Herdr. It goes into `~/.codex/skills/herdr/` **and**
+`~/.claude/skills/herdr/` — codex reads the first, Claude Code the second. A
+guide that is right for one and missing for the other leaves that session with
+no guide at all.
 
-- The gate must be `HC_TERMINAL_ID`. The older `herdr` guide gates on
-  `HERDR_ENV=1`, a variable nothing sets in this Herdr — an agent reading it stops
-  and says it is not inside Herdr.
-- The skill is a copy of the manuals the installed binaries print. When the core
-  is updated, the copy goes stale and the agent reads yesterday's commands.
+What the guide has to say, or an agent stops before it does anything:
 
-`herdr-pipe-patch.ps1 status` checks both (which guide is installed, whether it is
-current) and `apply` rebuilds it from the binaries on this machine.
+- **The gate is `HC_TERMINAL_ID`.** The older guide gates on `HERDR_ENV=1`, a
+  variable nothing in this Herdr sets — an agent reading it says "I am not
+  inside Herdr, so I stop", and the session is over before it starts.
+- **`herdr` is a different product.** On a machine that has it, `herdr` is the
+  0.9.5 terminal multiplexer: its own socket, its own agents, its own guide.
+  `herdr agent list`, `herdr machine list` and `herdr --machine <label> agent
+  prompt <name>` describe *that* product, not the Herdr App. The 0.1.x App's
+  agents are driven with `hc`, by address.
+- **The head must match the side of the machine.** On WSL the guide needs the
+  head that names the two cores and `win-hc`; the Windows head tells the agent
+  to use `hc` and `herdr-app` on the local core only, and never mentions
+  `win-hc`, so a WSL agent reading it still cannot reach the Windows agents. If
+  the installed guide does not mention `win-hc` on WSL, it has the wrong head.
+- **The manuals must be current.** The guide is a copy of what the installed
+  binaries print. When the core is updated, the copy goes stale and the agent
+  reads yesterday's commands.
+
+`herdr-pipe-patch.ps1 status` checks both guides (installed, the gate, the
+head, the manuals) and `apply` rebuilds both from the binaries on this machine.
 
 To install it on another machine:
 
@@ -186,9 +202,9 @@ To install it on another machine:
 which copies it into `~/.codex/skills/herdr/` and `~/.claude/skills/herdr/`.
 
 On a **WSL** machine that talks to a Windows Herdr App, use the shell installer
-instead — it writes the guide for the core *on that machine* and puts the
-`win-hc` wrapper in `~/.local/bin/`, so a WSL-side agent can reach the Windows
-core's terminals and agents:
+instead — it writes the guide for the core *on that machine*, with the WSL head
+(the two cores, `win-hc`), and puts the `win-hc` wrapper in `~/.local/bin/`, so
+a WSL-side agent can reach the Windows core's terminals and agents:
 
 ```sh
 sh install-skill-wsl.sh
@@ -197,6 +213,10 @@ sh install-skill-wsl.sh
 Run it with `sh`: a zip made on Windows carries no exec bit. The pipe patch
 itself is a Windows-side job — the core that owns the pipes runs on Windows —
 so on WSL it is the `win-hc` wrapper that reaches them, not a patched core.
+
+Check the WSL guide like this: it has to mention `win-hc`, and it has to gate on
+`HC_TERMINAL_ID`. A guide that mentions neither is the wrong one — the 0.9.5
+guide, or the Windows head.
 
 ## When the core is updated
 

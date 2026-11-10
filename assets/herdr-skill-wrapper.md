@@ -47,5 +47,21 @@ A name is set when a terminal is started with `hc run --name`. A terminal's
 *title* — what the program inside it prints — is **not** an address: a
 terminal whose title is `bob-rae` still answers to its ID.
 
+A machine link reaches only the terminals **that machine started itself**:
+`hc get herdr-wsl/t3` answers "denied: herdr-wsl may only reach the terminals
+here that started its own". The terminals in this app are not a peer's
+terminals. To reach one of a peer's own terminals, ask that peer - or run
+that peer's `hc` binary, so the request is local to its core.
+
+## Sending
+
+`hc send <t> "text"` pastes the text **and submits it** - the message is
+delivered. `hc keys <t> ...` is for what `send` cannot do: a trust dialog
+(`hc keys <t> down enter`), an interrupt, a control key.
+
+If a send answers "nothing was typed", nothing was lost: that is a status
+guard, because the target was busy or silent rather than idle. Send to a
+working agent with `--if working`, or type anyway with `--force`.
+
 ---
 

@@ -129,7 +129,7 @@ installs two things into `~/.codex/skills/` and `~/.claude/skills/`:
 ### The skill on a WSL machine
 
 `install-skill-wsl.sh` does the same for a WSL machine that talks to a Windows
-Herdr App:
+Herdr App. It is in the tool zip above and in the repository:
 
 ```
 sh install-skill-wsl.sh              # the guide and the win-hc wrapper

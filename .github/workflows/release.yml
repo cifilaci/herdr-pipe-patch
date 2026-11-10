@@ -124,6 +124,22 @@ jobs:
           Copy-Item herdr-pipe-patch.ps1, README.md, LICENSE, install-skill.ps1, install-skill-wsl.sh, herdr-pipe-patch.exe $tool
           Copy-Item -Recurse patches, scripts, skills, assets $tool
           Copy-Item -Recurse ".\payload\$version" (Join-Path $tool "payload\$version")
+
+          # The tool has to carry what the README promises a consumer. A file
+          # that is missing from the package fails the job here rather than in
+          # somebody else's terminal.
+          foreach ($expected in @(
+                  'herdr-pipe-patch.ps1', 'README.md', 'LICENSE',
+                  'install-skill.ps1', 'install-skill-wsl.sh', 'herdr-pipe-patch.exe',
+                  'patches\herdr-core-pipe-extra-sids.patch',
+                  "payload\$version\herdr-core.exe", "payload\$version\herdr-core.exe.sha256",
+                  'scripts\probe-core.ps1', 'skills\herdr-pipe-patch\SKILL.md',
+                  'assets\herdr-skill-wrapper.md', 'assets\herdr-skill-wrapper-wsl.md',
+                  'assets\win-hc')) {
+              if (-not (Test-Path -LiteralPath (Join-Path $tool $expected) -PathType Leaf)) {
+                  throw "the package has no $expected - it is incomplete"
+              }
+          }
           tar -a -cf (Join-Path $dist "herdr-pipe-patch-$version.zip") -C $stage "herdr-pipe-patch-$version"
           if ($LASTEXITCODE) { throw 'the tool zip failed' }
 
@@ -179,6 +195,9 @@ jobs:
           * herdr-pipe-patch.exe - the whole tool in one file
           * herdr-core-$version-patched.zip - the patched core alone, with the ConPTY
           * *.sha256 - a checksum for every asset
+
+          The zip carries both skill installers: install-skill.ps1 for Windows, and
+          install-skill-wsl.sh for a WSL machine that talks to a Windows Herdr App.
 
           Every asset has a .sha256 beside it. The checksums are not signed: they
           prove the download is intact, not who published it.
