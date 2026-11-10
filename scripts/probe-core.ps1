@@ -106,7 +106,6 @@ try {
     Remove-Item Env:HC_SOCKET -ErrorAction SilentlyContinue
 
     Invoke-Native -File $Core -Arguments @('server', 'start', '--json') | Out-Null
-    Start-Sleep -Milliseconds 1500
 
     # The serving core writes its pipe path into core.lock; fall back to the
     # name it would use.
@@ -122,7 +121,14 @@ try {
         $user = ($env:USERNAME -replace '[^A-Za-z0-9]', '')
         $pipe = "\\.\pipe\herdr-core-$user-$session.sock"
     }
-    $descriptor = [HerdrPipePatchProbe]::ReadDescriptor($pipe)
+
+    # The core needs a moment to create its pipe; a slow machine needs more
+    # than a fixed sleep, so the descriptor is read until it answers.
+    $descriptor = $null
+    for ($i = 0; $i -lt 60 -and -not $descriptor; $i++) {
+        $descriptor = [HerdrPipePatchProbe]::ReadDescriptor($pipe)
+        if (-not $descriptor) { Start-Sleep -Milliseconds 500 }
+    }
 
     Invoke-Native -File $Core -Arguments @('server', 'stop', '--json') | Out-Null
 

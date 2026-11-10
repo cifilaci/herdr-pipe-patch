@@ -509,10 +509,16 @@ function Test-CandidateBinary {
         Remove-Item Env:HC_SOCKET -ErrorAction SilentlyContinue
 
         Invoke-Native -File $Candidate -Arguments @('server', 'start', '--json') | Out-Null
-        Start-Sleep -Milliseconds 1500
 
+        # The core needs a moment to create its pipe. A slow machine (a CI
+        # runner) needs more than a fixed sleep, so the descriptor is read
+        # until it answers or half a minute is up.
         $pipe = Get-PipePath $probe
-        $descriptor = Get-PipeDescriptor $pipe
+        $descriptor = $null
+        for ($i = 0; $i -lt 60 -and -not $descriptor; $i++) {
+            $descriptor = Get-PipeDescriptor $pipe
+            if (-not $descriptor) { Start-Sleep -Milliseconds 500 }
+        }
         $granted = @(Get-DescriptorSids $descriptor)
         $missing = @()
         foreach ($s in $GrantSids) { if (-not $granted.Contains($s)) { $missing += $s } }
