@@ -176,13 +176,15 @@ $script:SddlWellKnown = @{
 function Get-DescriptorSids {
     param([string] $Descriptor)
     $sids = New-Object System.Collections.Generic.List[string]
-    if (-not $Descriptor) { return $sids }
+    if (-not $Descriptor) { return @() }
     foreach ($m in [regex]::Matches($Descriptor, '\([A-Z]+;;[A-Z]+;;;([^)]*)\)')) {
         $sid = $m.Groups[1].Value
         if ($script:SddlWellKnown.ContainsKey($sid)) { $sid = $script:SddlWellKnown[$sid] }
         if ($sid -and -not $sids.Contains($sid)) { $sids.Add($sid) }
     }
-    return $sids
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $sids.ToArray()
 }
 
 function Get-Sha256 {
@@ -377,7 +379,9 @@ function Get-LocalAccountNames {
             }
         } catch { }
     }
-    return $names
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $names.ToArray()
 }
 
 function Resolve-AccountSid {
@@ -401,12 +405,14 @@ function Get-LocalGroupSids {
             }
         } catch { }
     }
-    return $sids
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $sids.ToArray()
 }
 
 function Resolve-TargetSids {
     $wanted = New-Object System.Collections.Generic.List[string]
-    $groupSids = Get-LocalGroupSids
+    $groupSids = @(Get-LocalGroupSids)
 
     if ($Sids) {
         foreach ($s in ($Sids -split '[,;]')) {
@@ -428,7 +434,7 @@ function Resolve-TargetSids {
     }
 
     if ($wanted.Count -eq 0) {
-        foreach ($n in (Get-LocalAccountNames)) {
+        foreach ($n in @(Get-LocalAccountNames)) {
             if ($n -like $AccountPattern) {
                 $sid = Resolve-AccountSid $n
                 if ($sid) { Write-Note "$n -> $sid (matched '$AccountPattern')"; $wanted.Add($sid) }
@@ -438,7 +444,9 @@ function Resolve-TargetSids {
 
     $unique = New-Object System.Collections.Generic.List[string]
     foreach ($s in $wanted) { if (-not $unique.Contains($s)) { $unique.Add($s) } }
-    return $unique
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $unique.ToArray()
 }
 
 # ------------------------------------------------------------------- changing things
@@ -505,7 +513,7 @@ function Test-CandidateBinary {
 
         $pipe = Get-PipePath $probe
         $descriptor = Get-PipeDescriptor $pipe
-        $granted = Get-DescriptorSids $descriptor
+        $granted = @(Get-DescriptorSids $descriptor)
         $missing = @()
         foreach ($s in $GrantSids) { if (-not $granted.Contains($s)) { $missing += $s } }
 
@@ -879,7 +887,9 @@ function Get-CodexSandboxAccounts {
             }
         } catch { }
     }
-    return $list
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $list.ToArray()
 }
 
 function Get-CodexSandboxService {
@@ -1013,7 +1023,7 @@ function Show-Codex {
         $problems.Add('codex daemon_auto_start is not false: a shared app-server daemon freezes the pane environment')
     }
 
-    $accounts = Get-CodexSandboxAccounts
+    $accounts = @(Get-CodexSandboxAccounts)
     $service = Get-CodexSandboxService
     Write-Note ('sandbox accounts: ' + $(if ($accounts.Count -gt 0) { ($accounts | ForEach-Object { $_.Name }) -join ', ' } else { 'none' }))
     Write-Note ('sandbox service : ' + $(if ($service) { "$($service.Name) ($($service.Status))" } else { 'not installed' }))
@@ -1069,7 +1079,7 @@ function Repair-Codex {
     #>
     param([string] $Hc, [string[]] $GrantSids, [switch] $DryRun)
 
-    $accounts = Get-CodexSandboxAccounts
+    $accounts = @(Get-CodexSandboxAccounts)
     $service = Get-CodexSandboxService
     $haveAccounts = ($accounts.Count -gt 0 -and $service)
     $configPath = Join-Path (Get-CodexHome) 'config.toml'
@@ -1144,7 +1154,7 @@ function Show-Status {
     Write-Note "version        : $version"
     Write-Note "patch support  : $(if ($patched) { "yes - the binary honours $script:EnvVar" } else { 'no - this is a stock core' })"
     if ($status) {
-        Write-Note "running core   : $($status.version) (pid $($status.pid)), $($status.live) live terminals, $($status.holders.Count) holder(s)"
+        Write-Note "running core   : $($status.version) (pid $($status.pid)), $($status.live) live terminals, $(@($status.holders).Count) holder(s)"
         Write-Note "installed_by   : $(if ($status.installed_by) { $status.installed_by } else { 'a plain install (hc can update it)' })"
     } else {
         Write-Note 'running core   : none'
@@ -1163,7 +1173,7 @@ function Show-Status {
     Write-Note "name   : $pipe"
     if ($descriptor) {
         Write-Note "DACL   : $descriptor"
-        $granted = Get-DescriptorSids $descriptor
+        $granted = @(Get-DescriptorSids $descriptor)
         Write-Note ('grants : ' + ($granted -join ', '))
         if ($GrantSids.Count -gt 0) {
             $missing = @()
@@ -1196,7 +1206,7 @@ if ($Command -eq 'build') {
     # Building comes before the core lookup on purpose: a build makes a core,
     # so it must work on a machine that has none - the CI runner, for one.
     if (-not $Version) { Stop-Tool 'build needs -Version (for example -Version 0.1.20).' }
-    $buildSids = Resolve-TargetSids
+    $buildSids = @(Resolve-TargetSids)
     if ($buildSids.Count -eq 0) { $buildSids = @('S-1-1-0') }
     Build-Payload -Version $Version -GrantSids $buildSids | Out-Null
     Write-Log "payload for $Version is ready" 'step'
@@ -1211,7 +1221,7 @@ try {
     exit 1
 }
 
-$grant = Resolve-TargetSids
+$grant = @(Resolve-TargetSids)
 if ($grant.Count -eq 0 -and $Command -ne 'status') {
     Write-Warn "no principals to grant were found (looked for accounts matching '$AccountPattern'). Give -Account or -Sids."
 }
@@ -1226,7 +1236,7 @@ switch ($Command) {
         if (-not $s.Patched) {
             Write-Note 'the installed core has no support for the variable: run apply.'
         } elseif ($grant.Count -gt 0) {
-            $granted = Get-DescriptorSids $s.Descriptor
+            $granted = @(Get-DescriptorSids $s.Descriptor)
             $missing = @()
             foreach ($x in $grant) { if (-not $granted.Contains($x)) { $missing += $x } }
             if ($missing.Count -gt 0) {
@@ -1299,7 +1309,7 @@ switch ($Command) {
 
         Write-Step 'verifying'
         $after = Show-Status -Hc $hc -GrantSids $grant
-        $granted = Get-DescriptorSids $after.Descriptor
+        $granted = @(Get-DescriptorSids $after.Descriptor)
         $missing = @()
         foreach ($x in $grant) { if (-not $granted.Contains($x)) { $missing += $x } }
         if ($missing.Count -gt 0) { Stop-Tool "the pipe still does not grant: $($missing -join ', ')" }
@@ -1347,7 +1357,7 @@ switch ($Command) {
         Write-Step 'verifying'
         $after = Show-Status -Hc $hc -GrantSids @()
         if ($after.Patched) { Stop-Tool 'the installed core still carries the patch support.' }
-        $granted = Get-DescriptorSids $after.Descriptor
+        $granted = @(Get-DescriptorSids $after.Descriptor)
         if ($grant.Count -gt 0) {
             $still = @()
             foreach ($x in $grant) { if ($granted.Contains($x)) { $still += $x } }
@@ -1364,7 +1374,7 @@ switch ($Command) {
         $problems = @()
         if (-not $s.Patched) { $problems += 'the installed core has no patch support' }
         if ($grant.Count -gt 0) {
-            $granted = Get-DescriptorSids $s.Descriptor
+            $granted = @(Get-DescriptorSids $s.Descriptor)
             foreach ($x in $grant) { if (-not $granted.Contains($x)) { $problems += "the pipe does not grant $x" } }
         }
         if (-not $s.Status) { $problems += 'no core is running' }
