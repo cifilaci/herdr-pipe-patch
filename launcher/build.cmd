@@ -11,9 +11,13 @@ rem
 rem Needs Rust (cargo) and the MSVC toolchain; nothing else.
 setlocal
 
-if not defined RUSTUP_HOME set "RUSTUP_HOME=%LOCALAPPDATA%\puccinialin\puccinialin\Cache\rustup"
-if not defined CARGO_HOME set "CARGO_HOME=%LOCALAPPDATA%\puccinialin\puccinialin\Cache\cargo"
-if exist "%CARGO_HOME%\bin\cargo.exe" set "PATH=%CARGO_HOME%\bin;%PATH%"
+rem The rustup proxies need RUSTUP_HOME and CARGO_HOME to find their toolchain.
+rem Point them at the local rustup install only when it is there: on a CI
+rem runner the toolchain is already installed and the path does not exist,
+rem and pointing RUSTUP_HOME at a missing folder breaks cargo.
+if not defined CARGO_HOME if exist "%LOCALAPPDATA%\puccinialin\puccinialin\Cache\cargo\bin\cargo.exe" set "CARGO_HOME=%LOCALAPPDATA%\puccinialin\puccinialin\Cache\cargo"
+if not defined RUSTUP_HOME if defined CARGO_HOME set "RUSTUP_HOME=%LOCALAPPDATA%\puccinialin\puccinialin\Cache\rustup"
+if defined CARGO_HOME if exist "%CARGO_HOME%\bin\cargo.exe" set "PATH=%CARGO_HOME%\bin;%PATH%"
 
 cd /d "%~dp0\.."
 
