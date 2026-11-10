@@ -1,0 +1,38 @@
+#!/bin/sh
+# win-hc - the Windows herdr-core CLI, run against the Windows core from WSL.
+#
+# The two machines run two cores, in two processes, with separate pipes and
+# separate terminals. `hc` drives this machine's core; this drives the
+# Windows one, so the terminals and coding agents of the Herdr App are
+# reachable from here.
+#
+# The same commands as hc: ls, get, read, send, keys, wait, run, kill, exec,
+# machine. A message that carries a newline is better sent from a Windows
+# shell than through here: the interop passes one argument, and a Windows
+# command line has no way to carry a line break in it.
+
+set -eu
+
+find_win_hc() {
+    if [ -n "${WIN_HC:-}" ] && [ -x "$WIN_HC" ]; then
+        printf '%s\n' "$WIN_HC"
+        return 0
+    fi
+    for candidate in \
+        /mnt/c/Users/*/AppData/Local/Programs/herdr-core/herdr-core.exe \
+        /mnt/c/Users/*/AppData/Local/herdr-core/herdr-core.exe
+    do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+core=$(find_win_hc) || {
+    echo "win-hc: no Windows herdr-core found (looked in /mnt/c/Users/*/AppData/Local/Programs/herdr-core)" >&2
+    exit 127
+}
+
+exec "$core" "$@"

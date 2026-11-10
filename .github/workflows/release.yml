@@ -140,7 +140,9 @@ jobs:
           tar -a -cf (Join-Path $dist "herdr-core-$version-patched.zip") -C $stage "herdr-core-$version-patched"
           if ($LASTEXITCODE) { throw 'the core zip failed' }
 
-          # 3. a checksum beside every asset
+          # 3. the one-file executable on its own, and a checksum beside every
+          #    asset
+          Copy-Item herdr-pipe-patch.exe $dist
           Get-ChildItem $dist -File | ForEach-Object {
               $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
               "$hash  $($_.Name)" | Set-Content -Encoding ascii "$($_.FullName).sha256"
