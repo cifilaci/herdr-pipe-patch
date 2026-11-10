@@ -126,6 +126,21 @@ installs two things into `~/.codex/skills/` and `~/.claude/skills/`:
 .\install-skill.ps1 -DryRun              # print what would happen
 ```
 
+### The skill on a WSL machine
+
+`install-skill-wsl.sh` does the same for a WSL machine that talks to a Windows
+Herdr App:
+
+```
+./install-skill-wsl.sh              # the guide and the win-hc wrapper
+./install-skill-wsl.sh --dry-run    # print what would happen
+```
+
+It writes the guide into `~/.claude/skills/herdr/` and `~/.codex/skills/herdr/`
+— built from the `hc --skill` of the core **on this machine** — and puts the
+`win-hc` wrapper into `~/.local/bin/`, so a WSL-side agent can reach the
+Windows core's terminals and agents too.
+
 ---
 
 ## Use
@@ -268,7 +283,8 @@ survive the restart.
 ```
 herdr-pipe-patch\
   herdr-pipe-patch.ps1                the tool
-  install-skill.ps1                   installs the skills for codex and Claude Code
+  install-skill.ps1                   installs the skills for codex and Claude Code (Windows)
+  install-skill-wsl.sh                the same for a WSL machine
   README.md                           this file
   LICENSE
   patches\
@@ -283,7 +299,9 @@ herdr-pipe-patch\
   skills\
     herdr-pipe-patch\SKILL.md         the skill agents read
   assets\
-    herdr-skill-wrapper.md            the head of the Herdr guide
+    herdr-skill-wrapper.md            the head of the Herdr guide (Windows)
+    herdr-skill-wrapper-wsl.md        the head of the Herdr guide (WSL)
+    win-hc                            the Windows core, run from WSL
   launcher\                            the source of the one-file exe
     build.rs                            collects the payloads into the binary
     src\main.rs                         the launcher itself
