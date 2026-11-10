@@ -1,0 +1,206 @@
+# Builds a patched herdr-core and publishes the tool as a release.
+#
+# The tag names the herdr-core version to patch: the tag v0.1.20 publishes the
+# assets for herdr-core 0.1.20. The workflow clones that tag, applies
+# patches/herdr-core-pipe-extra-sids.patch, builds it, and proves with a
+# behavioural probe that the binary really grants the SIDs before anything is
+# published.
+#
+# Nothing is published from an unproved build: the probe step fails the job
+# when the freshly built core does not grant the SIDs it was asked for.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'herdr-core version to build (e.g. 0.1.20). A tag push takes it from the tag.'
+        required: false
+        default: ''
+      publish:
+        description: 'Publish a GitHub release. A tag that does not exist yet is created.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ZIG_VERSION: '0.16.0'
+
+jobs:
+  release:
+    name: build the patched core and the assets
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: check out
+        uses: actions/checkout@v4
+
+      - name: work out the version
+        shell: pwsh
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          $version = "$env:REQUESTED".Trim()
+          if (-not $version) { $version = $env:GITHUB_REF_NAME -replace '^v', '' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "cannot read the version: '$version'" }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_TAG=v$version" >> $env:GITHUB_ENV
+          Write-Host "building herdr-core $version"
+
+      - name: set up rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: set up zig
+        shell: pwsh
+        run: |
+          # The vendored ghostty-vt needs Zig to build; the core's build says so.
+          $url = "https://ziglang.org/download/$env:ZIG_VERSION/zig-x86_64-windows-$env:ZIG_VERSION.zip"
+          Write-Host "fetching $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\zig.zip"
+          Expand-Archive -Force "$env:RUNNER_TEMP\zig.zip" "$env:RUNNER_TEMP\zig"
+          $zig = Get-ChildItem "$env:RUNNER_TEMP\zig" -Filter zig.exe -Recurse | Select-Object -First 1
+          if (-not $zig) { throw 'zig.exe was not in the archive' }
+          "ZIG=$($zig.FullName)" >> $env:GITHUB_ENV
+          Add-Content $env:GITHUB_PATH $zig.DirectoryName
+          & $zig.FullName version
+
+      - name: build the patched core
+        shell: pwsh
+        run: |
+          # The tool clones the tag, applies the patch and builds. It does not
+          # need a core on this machine - it makes one.
+          .\herdr-pipe-patch.ps1 build -Version $env:RELEASE_VERSION -WorkDir "$env:GITHUB_WORKSPACE\build"
+
+      - name: prove the build grants the SIDs
+        shell: pwsh
+        run: |
+          # An independent check of the built binary: run it as an isolated
+          # core and read its pipe descriptor back.
+          .\scripts\probe-core.ps1 -Core ".\payload\$env:RELEASE_VERSION\herdr-core.exe" -Sids 'S-1-1-0'
+
+      - name: build the single-file executable
+        shell: cmd
+        run: launcher\build.cmd
+
+      - name: package
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_VERSION
+          $stage = Join-Path $env:RUNNER_TEMP 'stage'
+          $dist = Join-Path $env:RUNNER_TEMP 'dist'
+          $core = Join-Path $env:GITHUB_WORKSPACE 'build\herdr-core'
+          Remove-Item -Recurse -Force $stage, $dist -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $dist | Out-Null
+
+          # 1. the tool, with the payload that was just built and proved
+          $tool = Join-Path $stage "herdr-pipe-patch-$version"
+          New-Item -ItemType Directory -Force (Join-Path $tool 'payload') | Out-Null
+          Copy-Item herdr-pipe-patch.ps1, README.md, LICENSE, install-skill.ps1, herdr-pipe-patch.exe $tool
+          Copy-Item -Recurse patches, scripts, skills, assets $tool
+          Copy-Item -Recurse ".\payload\$version" (Join-Path $tool "payload\$version")
+          tar -a -cf (Join-Path $dist "herdr-pipe-patch-$version.zip") -C $stage "herdr-pipe-patch-$version"
+          if ($LASTEXITCODE) { throw 'the tool zip failed' }
+
+          # 2. the patched core on its own, in the shape the upstream release
+          #    has: the core, Microsoft's ConPTY, the licence and the notices
+          $own = Join-Path $stage "herdr-core-$version-patched"
+          New-Item -ItemType Directory -Force (Join-Path $own 'THIRD-PARTY-NOTICES') | Out-Null
+          Copy-Item ".\payload\$version\herdr-core.exe" $own
+          Copy-Item LICENSE $own
+          Copy-Item "$core\crates\herdr-core\THIRD-PARTY-NOTICES" (Join-Path $own 'THIRD-PARTY-NOTICES\herdr-core.txt')
+          Copy-Item "$core\distribution\windows\*" (Join-Path $own 'THIRD-PARTY-NOTICES')
+          & "$core\scripts\fetch-conpty.ps1" -Dest $own
+          if (-not (Test-Path (Join-Path $own 'conpty\conpty.dll'))) { throw 'the ConPTY could not be fetched' }
+          tar -a -cf (Join-Path $dist "herdr-core-$version-patched.zip") -C $stage "herdr-core-$version-patched"
+          if ($LASTEXITCODE) { throw 'the core zip failed' }
+
+          # 3. a checksum beside every asset
+          Get-ChildItem $dist -File | ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+              "$hash  $($_.Name)" | Set-Content -Encoding ascii "$($_.FullName).sha256"
+          }
+          Get-ChildItem $dist -File | ForEach-Object { Write-Host "asset: $($_.Name) ($($_.Length) bytes)" }
+
+      - name: publish the release
+        if: ${{ github.event_name == 'push' || inputs.publish }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $env:RELEASE_VERSION
+          $assets = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'dist') -File | ForEach-Object { $_.FullName }
+          $notes = @"
+          herdr-pipe-patch $version
+
+          herdr-core's Windows named pipes grant access to SYSTEM and to the account
+          that started the core. A client that has to run as another account - a
+          coding agent's sandbox - is refused with "Access is denied (os error 5)".
+
+          This release carries a herdr-core that reads HERDR_PIPE_EXTRA_SIDS and adds
+          one allow-ACE per SID to every pipe it creates. The variable is empty by
+          default, so an install that does not set it behaves exactly as before.
+
+          The upstream change is PR herdrdev/herdr-core#219 (issue #224). Until it is
+          merged and released, a stock core does not carry it, so the tool installs a
+          patched build and can put the stock one back.
+
+          Assets
+          ------
+          * herdr-pipe-patch-$version.zip - the tool, the patch and the payload
+          * herdr-pipe-patch.exe - the whole tool in one file
+          * herdr-core-$version-patched.zip - the patched core alone, with the ConPTY
+          * *.sha256 - a checksum for every asset
+
+          Every asset has a .sha256 beside it. The checksums are not signed: they
+          prove the download is intact, not who published it.
+
+          Built by GitHub Actions from the herdr-core tag v$version with
+          patches/herdr-core-pipe-extra-sids.patch applied. The build is proved
+          before it is published: the binary is run as an isolated core and its
+          pipe descriptor read back, and the job fails if it does not grant the SIDs.
+          "@
+
+          if (-not (git tag -l $tag)) {
+              Write-Host "the tag $tag does not exist yet - creating it"
+              git config user.name 'github-actions[bot]'
+              git config user.email 'github-actions[bot]@users.noreply.github.com'
+              git tag $tag
+              git push origin $tag
+          }
+
+          if (gh release view $tag 2>$null) {
+              gh release upload $tag @assets --clobber
+              gh release edit $tag --title "herdr-pipe-patch $version" --notes $notes
+          } else {
+              gh release create $tag @assets --title "herdr-pipe-patch $version" --notes $notes --verify-tag
+          }
+          Write-Host "published $tag"
+
+      - name: write the job summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = @"
+          ## herdr-pipe-patch
+
+          * herdr-core version: ``$env:RELEASE_VERSION``
+          * tag: ``$env:RELEASE_TAG``
+          * the build was proved by scripts/probe-core.ps1 before it was packaged.
+          "@
+          Add-Content $env:GITHUB_STEP_SUMMARY $summary

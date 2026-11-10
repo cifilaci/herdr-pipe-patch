@@ -1,0 +1,9 @@
+# the log the tool writes next to itself
+herdr-pipe-patch.log
+
+# the built one-file executable: the release carries it, the repository does not
+herdr-pipe-patch.exe
+
+# the launcher's copies of the tool, and its build output
+launcher/assets/
+launcher/target/

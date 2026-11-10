@@ -1,0 +1,17 @@
+[package]
+name = "herdr-pipe-patch"
+version = "1.0.0"
+edition = "2021"
+description = "Launcher: packs the herdr-core pipe patch tool into one executable"
+publish = false
+
+[[bin]]
+name = "herdr-pipe-patch"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

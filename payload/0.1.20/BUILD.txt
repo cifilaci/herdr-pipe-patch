@@ -1,0 +1,31 @@
+version      : 0.1.20
+source       : https://github.com/herdrdev/herdr-core
+tag          : v0.1.20
+commit       : de97ea5ba5d6877a5e082316b4a1a5b4918e861f
+patch        : herdr-core-pipe-extra-sids.patch
+patch sha256 : a92aba7586daa16ebd19ed3b59ab217446b6d10a03ed2065e5fa7d35b7899943
+binary sha256: 65c03887d68ddc5b9099a340fc32af800d2afcdeeb1b72f96b18fc76970d7b87
+binary size  : 8989696 bytes
+built        : 2026-11-10
+rustc        : rustc 1.97.0 (2d8144b78 2026-07-07)
+cargo        : cargo 1.97.0 (c980f4866 2026-06-30)
+zig          : 0.16.0 (the vendored ghostty-vt submodule needs it)
+conpty       : the pinned 1.24.260710001, fetched with scripts\fetch-conpty.ps1
+
+The source is the v0.1.20 tag with patches\herdr-core-pipe-extra-sids.patch applied.
+The patch is the diff of upstream PR #219 (issue #224), and it is generic: it names
+no agent, only "a client that has to run as another account".
+
+Rust embeds a path-dependent metadata hash, so a rebuild of the same source is not
+byte-identical. Compare the behaviour, not the bytes.
+
+Provenance check (2026-11-10): a second build of the same tag + patch, made by
+`herdr-pipe-patch.ps1 build -Version 0.1.20` from a fresh clone of the tag, gave
+sha256 7513558e3f3db818e992eedf9b9efa66498f789eb99648032cc6a7d6d0cbd44c (9008128 bytes).
+Its patched source is byte-identical to this build's after normalising line endings
+(the clone checked out CRLF, this tree LF), and it passed the same behavioural probe.
+The two binaries differ only because the line endings change the source hash Rust
+embeds. This one is the build that was installed and verified live.
+
+Check this payload before trusting it:
+  .\herdr-pipe-patch.ps1 status

@@ -1,0 +1,9 @@
+# Keep the working tree on LF: the patch is a diff, and git apply is happier
+# with LF context lines than with CRLF ones.
+* text=auto eol=lf
+
+# a batch file with LF line endings trips cmd.exe
+*.cmd text eol=crlf
+
+# binaries
+*.exe binary
