@@ -11,13 +11,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-// The payloads this executable carries: one patched core per version, read
-// out of `assets/payload` when the launcher is built.
+// What this executable carries, read out of `assets` when it is built: the
+// payload (one patched core per version), the script, the patch, the skill
+// and the installers that put the skill in place.
 include!(concat!(env!("OUT_DIR"), "/payloads.rs"));
-
-const SCRIPT: &str = include_str!("../assets/herdr-pipe-patch.ps1");
-const README: &str = include_str!("../assets/README.md");
-const PATCH: &[u8] = include_bytes!("../assets/patches/herdr-core-pipe-extra-sids.patch");
 
 const USAGE: &str = "\
 herdr-pipe-patch - grant other accounts access to the herdr-core pipes
@@ -32,9 +29,10 @@ Every option of the script itself works too, for example:
   herdr-pipe-patch.exe apply -Account CodexSandboxOffline -DryRun
   herdr-pipe-patch.exe status -HcPath C:\\path\\to\\herdr-core.exe
 
-This executable carries the script, the patched core and the patch. On first run
-they are unpacked under %LOCALAPPDATA%\\herdr-pipe-patch\\<marker> and the script
-is run from there; the unpacked files stay readable.";
+This executable carries the script, the patched core, the patch, the skill and
+the two installers. On first run they are unpacked under
+%LOCALAPPDATA%\\herdr-pipe-patch\\<marker> and the script is run from there; the
+unpacked files stay readable.";
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = env::args_os().skip(1).collect();
@@ -93,10 +91,13 @@ fn unpack() -> std::io::Result<PathBuf> {
         return Ok(root);
     }
 
-    fs::create_dir_all(root.join("patches"))?;
-    fs::write(root.join("herdr-pipe-patch.ps1"), SCRIPT)?;
-    fs::write(root.join("README.md"), README)?;
-    fs::write(root.join("patches").join("herdr-core-pipe-extra-sids.patch"), PATCH)?;
+    for (relative, bytes) in EXTRA_FILES {
+        let target = root.join(relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(target, bytes)?;
+    }
     for version in PAYLOAD_VERSIONS {
         let dir = root.join("payload").join(version);
         fs::create_dir_all(&dir)?;
@@ -105,6 +106,10 @@ fn unpack() -> std::io::Result<PathBuf> {
         fs::write(dir.join("herdr-core.exe.sha256"), checksum)?;
         fs::write(dir.join("BUILD.txt"), build)?;
     }
+
+    // The previous build's copy is 9 MB of patched core that nothing uses any
+    // more. It goes now, not on the next run.
+    remove_older_copies(&root);
 
     println!(
         "unpacked the tool into {}\nthe script there is plain text - read it before you trust it\n",
@@ -147,9 +152,9 @@ fn marker() -> String {
             hash = hash.wrapping_mul(0x1000_0000_01b3);
         }
     };
-    feed(SCRIPT.as_bytes());
-    feed(README.as_bytes());
-    feed(PATCH);
+    for (_, bytes) in EXTRA_FILES {
+        feed(bytes);
+    }
     for version in PAYLOAD_VERSIONS {
         let (core, _, _) = payload_files(version);
         feed(core);

@@ -5,7 +5,7 @@ herdr-pipe-patch.log
 herdr-pipe-patch.exe
 
 # the launcher's copies of the tool, and its build output
-launcher/assets/
+launcher/tree/
 launcher/target/
 
 # scratch files a review agent leaves behind

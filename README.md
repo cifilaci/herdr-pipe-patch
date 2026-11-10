@@ -61,9 +61,9 @@ Two things make this worth a tool rather than a one-off change:
 ### One file
 
 [`herdr-pipe-patch.exe`](https://github.com/cifilaci/herdr-pipe-patch/releases)
-is the whole tool in one executable: the script, the patched core and the patch
-are inside it. Copy that one file to a machine that has herdr-core installed and
-run it.
+is the whole tool in one executable: the script, the patched core, the patch,
+the skill and the two skill installers are inside it. Copy that one file to a
+machine that has herdr-core installed and run it.
 
 ```
 herdr-pipe-patch.exe status
@@ -78,7 +78,8 @@ trusted — and the marker is a hash of what the executable carries, so a new
 build of the exe unpacks afresh.
 
 It needs PowerShell 5.1 (it ships with Windows) and nothing else: no Rust, no
-cargo, no folder of loose files.
+cargo, no folder of loose files. The skill installers it carries need the
+herdr binaries on the machine they run on.
 
 ### The zip
 
@@ -103,6 +104,9 @@ The checksum proves the download is intact. It is not signed, so it does not
 prove who published it.
 
 ### The skill
+
+The skill and its installer are in the tool zip above, in this repository, and
+inside `herdr-pipe-patch.exe`. On Windows:
 
 ```powershell
 .\install-skill.ps1
@@ -191,7 +195,7 @@ matches `-AccountPattern` (default `CodexSandbox*`).
 | `-AccountPattern <glob>` | Which accounts to grant when neither of the above is given. Default `CodexSandbox*`. |
 | `-Version <v>` | The version for `build`. |
 | `-DryRun` | Print the plan, change nothing. |
-| `-Quiet` | Only the important lines. |
+| `-Quiet` | Only the errors and the warnings. |
 | `-Probe` | Also drive the core from a sandbox (needs `codex` on `PATH`). |
 | `-ReleasesUrl <url>` | Where `unpatch` downloads the stock core from. Default `https://releases.herdr.dev`. |
 | `-Repo <path>` | An existing herdr-core clone to build in. |
@@ -216,6 +220,11 @@ codex
     sandbox service : CodexSandboxService.OpenAI.Codex (Running)
     app-server      : running
     skill           : C:\Users\Cifi\.codex\skills\herdr\SKILL.md
+    gate            : HC_TERMINAL_ID
+    hc manual       : up to date
+    app manual      : up to date
+claude code
+    skill           : C:\Users\Cifi\.claude\skills\herdr\SKILL.md
     gate            : HC_TERMINAL_ID
     hc manual       : up to date
     app manual      : up to date
@@ -255,9 +264,10 @@ subcommand (`codex --no-daemon exec …`, not `codex exec --no-daemon …`).
   build (the old one is kept beside it as `herdr-core.exe.stock-<version>.bak`).
 - The user environment variable `HERDR_PIPE_EXTRA_SIDS`.
 - The core process: it is restarted, because the variable is read at start-up.
-- On the codex side: `~/.codex/config.toml` (two keys) and
-  `~/.codex/skills/herdr/SKILL.md` (rebuilt from the current manuals). Both are
-  copied to `*.bak-<timestamp>` before they are changed.
+- On the codex side: `~/.codex/config.toml` (two keys).
+- The Herdr guide, for both agents that read one: `~/.codex/skills/herdr/SKILL.md`
+  and `~/.claude/skills/herdr/SKILL.md`, rebuilt from the current manuals. They
+  are copied to `*.bak-<timestamp>` before they are changed.
 
 It does **not** touch your terminals. The holders own them, not the core, so they
 survive the restart.
@@ -363,6 +373,8 @@ The tag names the herdr-core version the payload was built from: the tag
 - Windows 10 or newer, PowerShell 5.1 (the tool) — no compiler needed to *run*
   it.
 - herdr-core installed (`hc --version` prints `hc <version>`).
+- **herdr-app** installed as well, for `install-skill.ps1`: the Herdr guide is
+  built from the manuals both binaries print, so it needs both.
 - To build a payload instead of using the bundled one: git, Rust (cargo) and
   **Zig 0.16** (the vendored `ghostty-vt` needs it).
 

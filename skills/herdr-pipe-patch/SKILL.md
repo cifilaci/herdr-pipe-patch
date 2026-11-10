@@ -97,8 +97,10 @@ On a machine where codex runs its elevated sandbox, the accounts are
 .\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline -Account CodexSandboxOnline
 ```
 
-or by SID, or with `-Sids`. `status` prints the SIDs the pipe currently grants, and
-`apply` refuses to grant a group SID without saying so.
+or by SID, or with `-Sids`. `status` prints the SIDs the pipe currently grants. `apply`
+**warns** when you give it a group SID and grants it anyway - the warning is
+the point: an access check honours a restricted token's user SID but not its
+group SIDs, so a group grants the client nothing. Give the account's own SID.
 
 ### 3. Apply
 

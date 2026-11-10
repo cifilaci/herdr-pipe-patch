@@ -22,23 +22,32 @@ if defined CARGO_HOME if exist "%CARGO_HOME%\bin\cargo.exe" set "PATH=%CARGO_HOM
 cd /d "%~dp0\.."
 
 echo === copying the tool into the launcher ===
-rem The assets folder is not in the repository: a fresh checkout has to make it.
-if not exist launcher\assets mkdir launcher\assets
-if exist launcher\assets\patches rmdir /s /q launcher\assets\patches
-if exist launcher\assets\payload rmdir /s /q launcher\assets\payload
+rem The tree is not in the repository: a fresh checkout has to make it.
+if exist launcher\tree rmdir /s /q launcher\tree
+if not exist launcher\tree mkdir launcher\tree
 
-copy /y herdr-pipe-patch.ps1 launcher\assets\ > nul
+copy /y herdr-pipe-patch.ps1 launcher\tree\ > nul
 if errorlevel 1 goto :copyfailed
-copy /y README.md launcher\assets\ > nul
+copy /y README.md launcher\tree\ > nul
 if errorlevel 1 goto :copyfailed
-xcopy /e /i /q /y patches launcher\assets\patches > nul
+copy /y install-skill.ps1 launcher\tree\ > nul
+if errorlevel 1 goto :copyfailed
+copy /y install-skill-wsl.sh launcher\tree\ > nul
+if errorlevel 1 goto :copyfailed
+xcopy /e /i /q /y patches launcher\tree\patches > nul
 if errorlevel 2 goto :copyfailed
-xcopy /e /i /q /y payload launcher\assets\payload > nul
+xcopy /e /i /q /y scripts launcher\tree\scripts > nul
+if errorlevel 2 goto :copyfailed
+xcopy /e /i /q /y skills launcher\tree\skills > nul
+if errorlevel 2 goto :copyfailed
+xcopy /e /i /q /y assets launcher\tree\assets > nul
+if errorlevel 2 goto :copyfailed
+xcopy /e /i /q /y payload launcher\tree\payload > nul
 if errorlevel 2 goto :copyfailed
 goto :copied
 
 :copyfailed
-echo === the files could not be copied into launcher\assets ===
+echo === the files could not be copied into launcher\tree ===
 exit /b 1
 
 :copied

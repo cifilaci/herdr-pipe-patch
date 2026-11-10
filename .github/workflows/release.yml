@@ -140,7 +140,10 @@ jobs:
                   throw "the package has no $expected - it is incomplete"
               }
           }
-          tar -a -cf (Join-Path $dist "herdr-pipe-patch-$version.zip") -C $stage "herdr-pipe-patch-$version"
+          # The zip's root is the tool itself, so unpacking it into a folder
+          # leaves the tool in that folder - which is what the README tells a
+          # consumer to do.
+          tar -a -cf (Join-Path $dist "herdr-pipe-patch-$version.zip") -C $tool .
           if ($LASTEXITCODE) { throw 'the tool zip failed' }
 
           # 2. the patched core on its own, in the shape the upstream release

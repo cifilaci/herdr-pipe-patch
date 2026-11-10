@@ -55,7 +55,7 @@ param(
     # Print what would happen and change nothing.
     [switch] $DryRun,
 
-    # Only the important lines.
+    # Only the errors and the warnings.
     [switch] $Quiet,
 
     # Also run a real client inside a sandbox to prove the pipe is reachable.
@@ -85,7 +85,7 @@ function Write-Log {
     param([string] $Message, [string] $Level = 'info')
     $line = '{0} {1,-5} {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
     try { Add-Content -LiteralPath $script:LogFile -Value $line -ErrorAction SilentlyContinue } catch { }
-    if (-not $Quiet -or $Level -eq 'error') { Write-Host $Message }
+    if (-not $Quiet -or $Level -eq 'error' -or $Level -eq 'warn') { Write-Host $Message }
 }
 
 function Write-Step { param([string] $Message) Write-Log "==> $Message" 'step' }
@@ -428,12 +428,23 @@ function Resolve-TargetSids {
 
     foreach ($a in $Account) {
         $sid = Resolve-AccountSid $a
-        if (-not $sid) { Stop-Tool "cannot resolve the account '$a' on this machine." }
+        if (-not $sid) {
+            # The account does not exist here yet - usually the elevated sandbox
+            # has not been provisioned. Stopping here would leave the person
+            # without the one command that fixes it.
+            Write-Warn "there is no account '$a' on this machine."
+            Write-Warn 'the elevated sandbox creates it; run this in an elevated terminal:'
+            Write-Warn '  codex sandbox setup --elevated --current-user'
+            continue
+        }
         Write-Note "$a -> $sid"
         $wanted.Add($sid)
     }
 
-    if ($wanted.Count -eq 0) {
+    # The pattern is the fallback, not the answer: when accounts were named
+    # and none of them exists here, granting the pattern's accounts instead
+    # would be granting something nobody asked for.
+    if ($wanted.Count -eq 0 -and @($Account).Count -eq 0) {
         foreach ($n in @(Get-LocalAccountNames)) {
             if ($n -like $AccountPattern) {
                 $sid = Resolve-AccountSid $n
@@ -1281,7 +1292,11 @@ try {
 
 $grant = @(Resolve-TargetSids)
 if ($grant.Count -eq 0 -and $Command -ne 'status') {
-    Write-Warn "no principals to grant were found (looked for accounts matching '$AccountPattern'). Give -Account or -Sids."
+    if (@($Account).Count -eq 0) {
+        Write-Warn "no principals to grant were found (looked for accounts matching '$AccountPattern'). Give -Account or -Sids."
+    }
+    Write-Warn 'the accounts the elevated sandbox runs as do not exist on this machine yet; run this in an elevated terminal:'
+    Write-Warn '  codex sandbox setup --elevated --current-user'
 }
 
 switch ($Command) {
@@ -1311,7 +1326,11 @@ switch ($Command) {
 
     'apply' {
         if (-not $hc) { Stop-Tool 'no herdr-core found on this machine.' }
-        if ($grant.Count -eq 0) { Stop-Tool 'nothing to grant. Give -Account or -Sids.' }
+        if ($grant.Count -eq 0) {
+            Write-Note 'the accounts the elevated sandbox runs as do not exist on this machine yet:'
+            Write-Note '  codex sandbox setup --elevated --current-user   # in an elevated terminal'
+            Stop-Tool 'nothing to grant yet. Run the command above, then apply again.'
+        }
 
         $s = Show-Status -Hc $hc -GrantSids $grant
         $installedVersion = ($s.Version -replace '^hc ', '')

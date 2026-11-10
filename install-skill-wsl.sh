@@ -51,7 +51,15 @@ say() { printf '%s\n' "$*"; }
 fail() { printf 'x %s\n' "$*" >&2; exit 1; }
 
 install_wrapper() {
-    command -v hc >/dev/null 2>&1 || fail "'hc' is not on PATH: the guide would have no manual in it."
+    # The guide is built from the manual 'hc' prints, so a machine without hc
+    # cannot get one. That is not a reason to install nothing: the win-hc
+    # wrapper is what reaches the Windows core, and that is often the whole
+    # point of being on WSL at all.
+    if ! command -v hc >/dev/null 2>&1; then
+        say "    no 'hc' on PATH: the guide is built from the manual it prints, so it was not written"
+        say "    install herdr-core on this machine, or run this where 'hc' is on PATH"
+        return 1
+    fi
     [ -f "$wrapper" ] || fail "no guide head at $wrapper"
 
     manual=$(hc --skill 2>/dev/null) || fail "'hc --skill' did not answer."
@@ -97,15 +105,21 @@ install_win_hc() {
     say "    wrote the wrapper into $target"
     case ":$PATH:" in
         *":$home/.local/bin:"*) ;;
-        *) say "    note: $home/.local/bin is not on PATH" ;;
+        *) say "    note: $home/.local/bin is not on PATH"
+           say "    add it to your shell: export PATH=\"$home/.local/bin:\$PATH\"" ;;
     esac
 }
 
 say "installing into: $home/.claude/skills, $home/.codex/skills"
+guide_failed=0
 if [ "$only" = all ] || [ "$only" = guide ]; then
-    install_wrapper
+    install_wrapper || guide_failed=1
 fi
 if [ "$only" = all ] || [ "$only" = wrapper ]; then
     install_win_hc
+fi
+if [ "$guide_failed" = 1 ]; then
+    say "done, but the guide was not written"
+    exit 1
 fi
 say "done"
