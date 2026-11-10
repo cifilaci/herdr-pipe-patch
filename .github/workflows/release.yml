@@ -65,6 +65,17 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: cache the cargo registry and the build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.GITHUB_WORKSPACE }}/build/herdr-core/target
+          key: herdr-core-${{ env.RELEASE_VERSION }}-${{ hashFiles('patches/herdr-core-pipe-extra-sids.patch') }}
+          restore-keys: |
+            herdr-core-${{ env.RELEASE_VERSION }}-
+
       - name: set up zig
         shell: pwsh
         run: |
