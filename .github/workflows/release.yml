@@ -177,6 +177,10 @@ jobs:
           $tag = $env:RELEASE_TAG
           $version = $env:RELEASE_VERSION
           $assets = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'dist') -File | ForEach-Object { $_.FullName }
+          # The tag names the core version, not the tool build: the tool changes
+          # between two publishes of the same tag. Its commit goes in the notes,
+          # so a consumer can tell which tool they downloaded.
+          $toolSha = (git rev-parse --short HEAD)
           $notes = @"
           herdr-pipe-patch $version
 
@@ -209,6 +213,9 @@ jobs:
           patches/herdr-core-pipe-extra-sids.patch applied. The build is proved
           before it is published: the binary is run as an isolated core and its
           pipe descriptor read back, and the job fails if it does not grant the SIDs.
+
+          The tag names the herdr-core version, not the tool build. These assets
+          were built from commit $toolSha of this repository.
           "@
 
           if (-not (git tag -l $tag)) {

@@ -95,13 +95,18 @@ curl.exe -fsSL -o $zip "$base/herdr-pipe-patch-$version.zip"
 # compare with the published checksum before unpacking
 $want = (curl.exe -fsSL "$base/herdr-pipe-patch-$version.zip.sha256").Split()[0]
 $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
-if ($got -ne $want) { throw "the download is damaged: $got, expected $want" }
+if ($got -ne $want) { throw "the download is not the published file: $got, expected $want" }
 
 Expand-Archive -Force $zip "$env:TEMP\herdr-pipe-patch-$version"
 ```
 
 The checksum proves the download is intact. It is not signed, so it does not
 prove who published it.
+
+A checksum that does not match is usually **not** a damaged download: when a
+release is re-published, the download service keeps serving the previous file
+for a while, and the checksum beside it is already the new one. Wait a few
+minutes and download again.
 
 ### The skill
 
