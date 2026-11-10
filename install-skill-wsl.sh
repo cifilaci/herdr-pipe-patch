@@ -12,10 +12,10 @@
 # local addition (the frontmatter, the HC_TERMINAL_ID gate, the note about
 # HERDR_ENV, and the two cores).
 #
-# Usage:
-#   ./install-skill-wsl.sh              # install both
-#   ./install-skill-wsl.sh --dry-run    # print what would happen
-#   ./install-skill-wsl.sh --only guide # only the guide, not the wrapper
+# Usage (run it with sh: a zip from Windows carries no exec bit):
+#   sh install-skill-wsl.sh              # install both
+#   sh install-skill-wsl.sh --dry-run    # print what would happen
+#   sh install-skill-wsl.sh --only guide # only the guide, not the wrapper
 #
 # Requires: a POSIX shell, `hc` on PATH (the herdr-core of this machine) and
 # a Windows herdr-core for the wrapper.

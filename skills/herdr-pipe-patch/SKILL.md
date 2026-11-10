@@ -185,6 +185,19 @@ To install it on another machine:
 
 which copies it into `~/.codex/skills/herdr/` and `~/.claude/skills/herdr/`.
 
+On a **WSL** machine that talks to a Windows Herdr App, use the shell installer
+instead — it writes the guide for the core *on that machine* and puts the
+`win-hc` wrapper in `~/.local/bin/`, so a WSL-side agent can reach the Windows
+core's terminals and agents:
+
+```sh
+sh install-skill-wsl.sh
+```
+
+Run it with `sh`: a zip made on Windows carries no exec bit. The pipe patch
+itself is a Windows-side job — the core that owns the pipes runs on Windows —
+so on WSL it is the `win-hc` wrapper that reaches them, not a patched core.
+
 ## When the core is updated
 
 A released herdr-core does **not** contain the patch until the upstream PR is

@@ -121,7 +121,7 @@ jobs:
           # 1. the tool, with the payload that was just built and proved
           $tool = Join-Path $stage "herdr-pipe-patch-$version"
           New-Item -ItemType Directory -Force (Join-Path $tool 'payload') | Out-Null
-          Copy-Item herdr-pipe-patch.ps1, README.md, LICENSE, install-skill.ps1, herdr-pipe-patch.exe $tool
+          Copy-Item herdr-pipe-patch.ps1, README.md, LICENSE, install-skill.ps1, install-skill-wsl.sh, herdr-pipe-patch.exe $tool
           Copy-Item -Recurse patches, scripts, skills, assets $tool
           Copy-Item -Recurse ".\payload\$version" (Join-Path $tool "payload\$version")
           tar -a -cf (Join-Path $dist "herdr-pipe-patch-$version.zip") -C $stage "herdr-pipe-patch-$version"

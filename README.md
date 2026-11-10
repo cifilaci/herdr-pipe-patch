@@ -132,9 +132,11 @@ installs two things into `~/.codex/skills/` and `~/.claude/skills/`:
 Herdr App:
 
 ```
-./install-skill-wsl.sh              # the guide and the win-hc wrapper
-./install-skill-wsl.sh --dry-run    # print what would happen
+sh install-skill-wsl.sh              # the guide and the win-hc wrapper
+sh install-skill-wsl.sh --dry-run    # print what would happen
 ```
+
+Run it with `sh`: a zip made on Windows carries no exec bit.
 
 It writes the guide into `~/.claude/skills/herdr/` and `~/.codex/skills/herdr/`
 — built from the `hc --skill` of the core **on this machine** — and puts the
