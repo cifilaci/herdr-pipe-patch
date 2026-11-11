@@ -64,9 +64,27 @@ jobs:
           # one-file executable carries both, so the substitution happens here
           # - in the checkout - and not in the staged copy afterwards, which
           # would be too late for the executable.
+          #
+          # The version that is replaced is the one the README already names,
+          # not a literal written into this script: a repository whose docs
+          # were bumped by hand would otherwise be stamped with nothing, and
+          # the release would be blocked later with a message that says
+          # nothing about what to do.
+          $readme = [IO.File]::ReadAllText('README.md')
+          $match = [regex]::Match($readme, '`v(\d+\.\d+\.\d+)` publishes the assets for herdr-core')
+          if (-not $match.Success) {
+              throw ("the README does not say which release it belongs to (no '`v0.1.20` publishes " +
+                  "the assets for herdr-core' line). The release cannot stamp it.")
+          }
+          $current = $match.Groups[1].Value
+          if ($current -eq $env:RELEASE_VERSION) {
+              Write-Host "the docs already name $current"
+          } else {
+              Write-Host "the docs name $current; they will name $env:RELEASE_VERSION"
+          }
           foreach ($file in @('README.md', 'skills/herdr-pipe-patch/SKILL.md')) {
               $text = [IO.File]::ReadAllText($file)
-              $text = $text.Replace('0.1.20', $env:RELEASE_VERSION)
+              $text = $text.Replace($current, $env:RELEASE_VERSION)
               [IO.File]::WriteAllText($file, $text, [System.Text.UTF8Encoding]::new($false))
               Write-Host "stamped $file with $env:RELEASE_VERSION"
           }
@@ -170,7 +188,9 @@ jobs:
               }
               $text = [IO.File]::ReadAllText($file)
               if (-not $text.Contains($env:RELEASE_VERSION)) {
-                  throw "$file does not name $env:RELEASE_VERSION"
+                  throw ("$file does not name $env:RELEASE_VERSION. The version in README.md and " +
+                      "skills/herdr-pipe-patch/SKILL.md has to be the one the stamp step replaces; " +
+                      "if they were changed by hand, put them back to the same version.")
               }
               Write-Host "$file names $env:RELEASE_VERSION"
           }
@@ -215,6 +235,32 @@ jobs:
           if (-not (Select-String -LiteralPath $readme -Pattern ([regex]::Escape($version)) -Quiet)) {
               throw "the README in the package does not name $version"
           }
+
+          # The one-file form and the package have to hold the same files: a
+          # file that is in one and not in the other means somebody got a
+          # different tool from the one they were told about. The build wrote
+          # down what the executable carries; the package is compared with it.
+          $carriedList = 'launcher\carried-files.txt'
+          if (-not (Test-Path -LiteralPath $carriedList -PathType Leaf)) {
+              throw "there is no $carriedList - the build did not say what the executable carries"
+          }
+          $carried = @(Get-Content -LiteralPath $carriedList | Where-Object { $_ })
+          $inPackage = @()
+          Get-ChildItem -LiteralPath $tool -Recurse -File | ForEach-Object {
+              $inPackage += $_.FullName.Substring($tool.Length + 1).Replace('\', '/')
+          }
+          foreach ($file in $carried) {
+              if ($inPackage -notcontains $file) {
+                  throw "the executable carries $file, but the package does not"
+              }
+          }
+          foreach ($file in $inPackage) {
+              if ($file -eq 'herdr-pipe-patch.exe') { continue }
+              if ($carried -notcontains $file) {
+                  throw "the package has $file, but the executable does not carry it"
+              }
+          }
+          Write-Host "the executable and the package carry the same $($carried.Count) files"
 
           # The zip's root is the tool itself, so unpacking it into a folder
           # leaves the tool in that folder - which is what the README tells a

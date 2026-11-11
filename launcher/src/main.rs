@@ -83,12 +83,21 @@ fn main() -> ExitCode {
 
 /// PowerShell refuses a parameter that is given twice, so "-Account A
 /// -Account B" fails before the script sees it. The values are joined into one
-/// comma-separated value instead, which the script splits. Both the space form
-/// and the "=" form are recognised, and the same is done for -Sids: the script
-/// splits both on a comma and on a semicolon.
+/// comma-separated value instead, which the script splits. The same is done
+/// for -Sids: the script splits both on a comma and on a semicolon.
+///
+/// Nothing else is changed. A parameter that is given once is passed through
+/// exactly as it was written, so the launcher and the script always agree
+/// about what the reader asked for - including when the answer is "that is
+/// not how the argument is written".
 fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
     // The parameters whose value may be given more than once.
     const JOINED: [&str; 2] = ["-Account", "-Sids"];
+
+    // The commands the script knows. A value stops at one of them: the verb
+    // binds to the script's first positional parameter, and it must not end
+    // up inside an account name.
+    const VERBS: [&str; 5] = ["status", "apply", "unpatch", "verify", "build"];
 
     // Every occurrence of such a parameter, and the tokens it covers.
     struct Occurrence {
@@ -96,6 +105,7 @@ fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
         end: usize,
         name: String,
         values: Vec<String>,
+        inline: bool,
     }
 
     let mut occurrences: Vec<Occurrence> = Vec::new();
@@ -115,27 +125,47 @@ fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
         }
         let mut values = Vec::new();
         let mut end = i + 1;
-        match inline {
-            Some(value) => values.push(value),
+        let inline_value = match inline {
+            Some(value) => {
+                values.push(value);
+                true
+            }
             None => {
-                while end < args.len() && !args[end].to_string_lossy().starts_with('-') {
-                    values.push(args[end].to_string_lossy().to_string());
+                while end < args.len() {
+                    let candidate = args[end].to_string_lossy().to_string();
+                    if candidate.starts_with('-') {
+                        break;
+                    }
+                    if VERBS.iter().any(|v| v.eq_ignore_ascii_case(&candidate)) {
+                        break;
+                    }
+                    values.push(candidate);
                     end += 1;
                 }
+                false
             }
-        }
+        };
         occurrences.push(Occurrence {
             start: i,
             end,
             name,
             values,
+            inline: inline_value,
         });
         i = end;
     }
 
-    // The values of each parameter, in the order they were given.
+    // How many times each parameter was given, and all of its values.
+    let mut counts: Vec<(String, usize)> = Vec::new();
     let mut values_of: Vec<(String, Vec<String>)> = Vec::new();
     for occurrence in &occurrences {
+        match counts
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
+        {
+            Some((_, count)) => *count += 1,
+            None => counts.push((occurrence.name.clone(), 1)),
+        }
         match values_of
             .iter_mut()
             .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
@@ -146,7 +176,7 @@ fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
     }
 
     let mut out: Vec<OsString> = Vec::new();
-    let mut joined: Vec<String> = Vec::new();
+    let mut emitted: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let occurrence = match occurrences.iter().find(|o| o.start == i) {
@@ -157,25 +187,44 @@ fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
                 continue;
             }
         };
+        let count = counts
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
+            .map(|(_, count)| *count)
+            .unwrap_or(1);
         let values = values_of
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
             .map(|(_, values)| values.clone())
             .unwrap_or_default();
-        if values.len() > 1 && !joined.iter().any(|n| n.eq_ignore_ascii_case(&occurrence.name)) {
-            // The space form, not "name=value": a value that holds a $ or a
-            // quote must reach PowerShell exactly as it was written.
-            joined.push(occurrence.name.clone());
+        let already = emitted
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&occurrence.name));
+
+        if already {
+            // The values are already in the occurrence that was emitted.
+        } else if count > 1 {
+            // PowerShell rejects a parameter that is given twice, so the
+            // values are joined into one. The space form, not "name=value":
+            // a value that holds a $ or a quote must reach PowerShell
+            // exactly as it was written.
+            emitted.push(occurrence.name.clone());
             out.push(OsString::from(occurrence.name.clone()));
             out.push(OsString::from(values.join(",")));
-        } else if values.len() <= 1 {
-            // One value, given once: the tokens are left as they are.
+        } else if occurrence.inline {
+            // A script parameter does not take the "name=value" form: PowerShell
+            // answers "A parameter cannot be found that matches parameter name
+            // 'Account=Alice'". The colon form works; the space form works too,
+            // and that is what the script's own examples use.
+            out.push(OsString::from(occurrence.name.clone()));
+            out.push(OsString::from(values.join(",")));
+        } else {
+            // Given once, in the space form: the tokens are left as they are,
+            // so the script sees exactly what the reader wrote.
             for arg in &args[occurrence.start..occurrence.end] {
                 out.push(arg.clone());
             }
         }
-        // More than one value and this is not the first occurrence: the values
-        // are already in the one that was emitted.
         i = occurrence.end;
     }
     out

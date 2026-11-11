@@ -58,7 +58,8 @@ done
 home=${HOME:-}
 if [ -z "$home" ]; then
     echo "no HOME" >&2
-    exit 1
+    echo "nothing was installed" >&2
+    exit 2
 fi
 
 say() { printf '%s\n' "$*"; }
@@ -78,6 +79,22 @@ install_wrapper() {
     fi
     if [ ! -f "$wrapper" ]; then
         say "    x no guide head at $wrapper"
+        return 1
+    fi
+    # The head is checked on its own, not on the head and the manual together:
+    # the manual mentions win-hc too, so a broken head would pass a check that
+    # looked at the whole guide. The head carries the frontmatter, and a
+    # skill without one is not a skill.
+    if [ ! -s "$wrapper" ]; then
+        say "    x the guide head at $wrapper is empty"
+        return 1
+    fi
+    if ! grep -q 'name: herdr' "$wrapper"; then
+        say "    x the guide head at $wrapper has no frontmatter: a skill loader would not read it"
+        return 1
+    fi
+    if ! grep -q 'win-hc' "$wrapper"; then
+        say "    x the guide head at $wrapper does not mention win-hc: it is the wrong head for this side"
         return 1
     fi
     if ! manual=$(hc --skill 2>/dev/null); then
@@ -101,9 +118,17 @@ $(printf '%s' "$manual" | tr -d '\r')
             continue
         fi
         file="$folder/SKILL.md"
+        # A directory where the guide should be: "cp" and "mv" would put the
+        # file inside it and still say they succeeded, and the folder cannot
+        # even be created.
+        if [ -d "$file" ]; then
+            say "    x $file is a directory: the guide cannot be written there"
+            failed=1
+            continue
+        fi
         # Every step is checked here: a function called from an "if" does not
         # stop on an error, so "set -e" cannot be relied on inside it.
-        if ! mkdir -p "$folder"; then
+        if ! mkdir -p "$folder" 2>/dev/null; then
             say "    x could not create $folder"
             failed=1
             continue
@@ -137,6 +162,13 @@ $(printf '%s' "$manual" | tr -d '\r')
         if ! mv "$tmp" "$file"; then
             say "    x could not put the guide in place at $file"
             rm -f "$tmp"
+            failed=1
+            continue
+        fi
+        # "mv" into a directory would have said it succeeded and put the file
+        # inside it. The file has to be there, and it has to be a file.
+        if [ ! -f "$file" ]; then
+            say "    x there is no guide at $file after the move"
             failed=1
             continue
         fi
@@ -176,12 +208,32 @@ install_win_hc() {
         say "    x could not create $(dirname "$target")"
         return 1
     fi
-    if ! cp "$win_hc_source" "$target"; then
-        say "    x could not write the wrapper into $target"
+    # A directory where the wrapper should be: "cp" would put the file inside
+    # it and still say it succeeded.
+    if [ -d "$target" ]; then
+        say "    x $target is a directory: the wrapper cannot be written there"
         return 1
     fi
-    if ! chmod +x "$target"; then
+    # Through a temporary file, so a copy that fails half-way cannot leave a
+    # broken wrapper where the old one was.
+    tmp="$target.tmp.$$"
+    if ! cp "$win_hc_source" "$tmp"; then
+        say "    x could not write the wrapper into $target"
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! chmod +x "$tmp"; then
         say "    x could not make $target executable"
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! mv "$tmp" "$target"; then
+        say "    x could not put the wrapper in place at $target"
+        rm -f "$tmp"
+        return 1
+    fi
+    if [ ! -f "$target" ]; then
+        say "    x there is no wrapper at $target after the move"
         return 1
     fi
     say "    wrote the wrapper into $target"
@@ -244,7 +296,7 @@ if [ "$ask_guide" = 1 ] && [ "$ask_wrapper" = 1 ]; then
         if [ "$wrapper_state" = all ]; then
             say "done: the win-hc wrapper and some of the guides are installed, but not every guide could be written"
         else
-            say "done: some of the guides are installed, but not every guide could be written"
+            say "done: some of the guides are installed, but not every guide could be written, and the win-hc wrapper was not written either"
         fi
         exit 1
     fi

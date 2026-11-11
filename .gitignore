@@ -10,3 +10,6 @@ launcher/target/
 
 # scratch files a review agent leaves behind
 .review-scratch/
+
+# the list of files the built executable carries, written by the build
+launcher/carried-files.txt

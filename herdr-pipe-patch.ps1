@@ -466,13 +466,14 @@ function Resolve-TargetSids {
         $sid = Resolve-AccountSid $a
         if (-not $sid) {
             # The account does not exist here. The advice depends on the
-            # machine and on the name: the elevated sandbox creates the
-            # accounts it runs as, and nothing creates any other one - so
-            # telling somebody to run the setup would be false twice over
-            # when the sandbox accounts are already here.
+            # machine and on the name: the elevated sandbox creates exactly
+            # two accounts - CodexSandboxOffline and CodexSandboxOnline - and
+            # nothing creates any other one. So "run the setup" is only true
+            # for those two names, and only where they are not here yet.
             Write-Warn "there is no account '$a' on this machine."
             $sandboxHere = @(Get-CodexSandboxAccounts)
-            if ($a -like 'CodexSandbox*' -and $sandboxHere.Count -eq 0) {
+            $isSandboxAccount = ($a -eq 'CodexSandboxOffline' -or $a -eq 'CodexSandboxOnline')
+            if ($isSandboxAccount -and $sandboxHere.Count -eq 0) {
                 Write-Warn 'the elevated sandbox creates it; run this in an elevated terminal:'
                 Write-Warn '  codex sandbox setup --elevated --current-user'
             } elseif ($sandboxHere.Count -gt 0) {
