@@ -1110,12 +1110,19 @@ function Update-CodexSkill {
         }
     }
     $app = Get-HerdrAppPath
-    if (-not $app) { Write-Fail 'herdr-app was not found, so the app manual cannot be read.'; return $false }
+    if (-not $Hc -and -not $app) {
+        Write-Fail 'there is no core and no herdr-app on this machine, so neither manual can be read; the guide was not rewritten.'
+        return $false
+    }
     if (-not $Hc) {
         # The guide is built from the manuals the two binaries print. Without
         # the core there is no hc manual, and a guide that carries only half
         # of it would send the agent looking for commands it does not have.
         Write-Fail 'there is no core on this machine, so the hc manual cannot be read; the guide was not rewritten.'
+        return $false
+    }
+    if (-not $app) {
+        Write-Fail 'herdr-app was not found, so the app manual cannot be read; the guide was not rewritten.'
         return $false
     }
 
@@ -1297,6 +1304,11 @@ function Repair-Codex {
             } else {
                 Write-Note "$agent skill: not installed - it cannot be written without a core on this machine"
             }
+        } elseif ($skill.NoCore) {
+            # The manual was never read, so it cannot be compared with one:
+            # saying "the guide is older" would claim a comparison that did
+            # not happen.
+            Write-Note "$agent skill: not rebuilt - there is no core here to print the hc manual"
         } elseif (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc) {
             Write-Note "$agent skill: rebuild it from the manuals the installed binaries print"
         }
@@ -1310,26 +1322,54 @@ function Repair-Codex {
         Write-Note 'a shared app-server daemon is running. Start codex as `codex --no-daemon` (the flag goes before the subcommand).'
         Write-Note '  codex app-server daemon stop   # only when no other session needs it'
     }
-    if ($DryRun) { Write-Log 'dry run: the codex side was not changed' 'step'; return }
+    if ($DryRun) { Write-Log 'dry run: the codex side was not changed' 'step'; return $true }
 
+    # Nothing here may stop the caller. A guide that cannot be written - a
+    # read-only folder, a locked file - is a fact about the machine, and the
+    # pipe work still has to happen. The failures are reported and the
+    # caller is told that one of them did not work out.
+    $ok = $true
     if ($haveConfig) {
         if ($haveAccounts -and $windowsSandbox -ne 'elevated') {
-            if (Set-CodexConfigValue -Section 'windows' -Key 'sandbox' -Value '"elevated"') {
-                Write-Note 'windows.sandbox is now elevated'
+            try {
+                if (Set-CodexConfigValue -Section 'windows' -Key 'sandbox' -Value '"elevated"') {
+                    Write-Note 'windows.sandbox is now elevated'
+                }
+            } catch {
+                Write-Fail "the codex config could not be changed: $($_.Exception.Message)"
+                $ok = $false
             }
         }
         if ($daemonAutoStart -ne 'false') {
-            if (Set-CodexConfigValue -Section 'features' -Key 'daemon_auto_start' -Value 'false') {
-                Write-Note 'daemon_auto_start is now false'
+            try {
+                if (Set-CodexConfigValue -Section 'features' -Key 'daemon_auto_start' -Value 'false') {
+                    Write-Note 'daemon_auto_start is now false'
+                }
+            } catch {
+                Write-Fail "the codex config could not be changed: $($_.Exception.Message)"
+                $ok = $false
             }
         }
     }
     foreach ($agent in @('codex', 'claude')) {
         $skill = Get-CodexSkill -Hc $Hc -Agent $agent
         if (-not $skill.Exists -or -not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc) {
-            if (Update-CodexSkill -Hc $Hc -Agent $agent) { Write-Note "the $agent skill now carries the current manuals" }
+            try {
+                if (Update-CodexSkill -Hc $Hc -Agent $agent) {
+                    Write-Note "the $agent skill now carries the current manuals"
+                } else {
+                    # The guide was not rewritten. The reason has already been
+                    # printed; what matters here is that the run did not do
+                    # what it promised.
+                    $ok = $false
+                }
+            } catch {
+                Write-Fail "the $agent guide could not be written: $($_.Exception.Message)"
+                $ok = $false
+            }
         }
     }
+    return $ok
 }
 
 # ------------------------------------------------------------------------ reporting
@@ -1467,14 +1507,15 @@ switch ($Command) {
 
     'apply' {
         if (-not $hc) {
-            # No core: the pipe cannot be patched, but the guides are files and
-            # a machine without a core still has agents that read them. The
-            # codex side is done first, so the promise the dry run makes is
-            # kept even here.
+            # No core: the pipe cannot be patched, and the guides cannot be
+            # rebuilt either - they are built from the manuals the binaries
+            # print, and there is no core to print the hc manual. So nothing
+            # is changed here at all: the codex side is looked at, not
+            # written, and the reader is told to come back with a core.
             Write-Warn 'no herdr-core found on this machine: the pipe was not touched.'
             Write-Note "looked in: the app's settings.json, PATH, %LOCALAPPDATA%\Programs\herdr-core, ~\.cargo\bin"
-            Repair-Codex -Hc $null -GrantSids $grant -DryRun:$DryRun
-            Stop-Tool 'there is no core to patch. The codex side was looked at; install herdr-core and run apply again.'
+            $null = Repair-Codex -Hc $null -GrantSids $grant -DryRun
+            Stop-Tool 'there is no core to patch. The codex side was looked at but not changed; install herdr-core and run apply again.'
         }
         # No accounts to grant is not a dead end: the patched core does not need
         # them. The core goes in, and the person is told to provision the
@@ -1527,7 +1568,7 @@ switch ($Command) {
         Write-Note "restart the core so it reads $script:EnvVar"
 
         if ($DryRun) {
-            Repair-Codex -Hc $hc -GrantSids $grant -DryRun
+            $null = Repair-Codex -Hc $hc -GrantSids $grant -DryRun
             Write-Log 'dry run: nothing was changed' 'step'
             exit 0
         }
@@ -1537,9 +1578,10 @@ switch ($Command) {
         # promise broken, and the guide does not depend on the core step at
         # all - it is built from the manuals the installed binaries print, and
         # the candidate is the same version as the installed core, so the
-        # manual is the same either way.
+        # manual is the same either way. A guide that cannot be written is
+        # reported and does not stop the pipe work.
         Write-Step 'the codex side'
-        Repair-Codex -Hc $hc -GrantSids $grant
+        $codexOk = Repair-Codex -Hc $hc -GrantSids $grant
 
         if (-not $s.Patched) {
             $candidate = Get-PatchedCore -WantedVersion $installedVersion -GrantSids $grantSids -AllowBuild
@@ -1583,6 +1625,13 @@ switch ($Command) {
         foreach ($x in $grant) { if (-not $granted.Contains($x)) { $missing += $x } }
         if ($missing.Count -gt 0) { Stop-Tool "the pipe still does not grant: $($missing -join ', ')" }
         if ($Probe) { Invoke-Probe -Hc $hc }
+        if (-not $codexOk) {
+            # The pipe work is done, but something the run promised did not
+            # happen. That is not a success, and it is not a failure of the
+            # pipe: it says exactly what is missing.
+            Write-Log 'done: the core is patched and the principals are granted, but the guide could not be written' 'step'
+            exit 1
+        }
         if ($noGrants) {
             Write-Log 'done: the core is patched; there are no accounts to grant yet' 'step'
         } else {
