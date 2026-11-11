@@ -458,12 +458,16 @@ function Resolve-TargetSids {
     foreach ($a in $accountNames) {
         $sid = Resolve-AccountSid $a
         if (-not $sid) {
-            # The account does not exist here yet - usually the elevated sandbox
-            # has not been provisioned. Stopping here would leave the person
-            # without the one command that fixes it.
+            # The account does not exist here. The advice depends on which
+            # account it is: the elevated sandbox creates the accounts it runs
+            # as, and nothing creates any other one.
             Write-Warn "there is no account '$a' on this machine."
-            Write-Warn 'the elevated sandbox creates it; run this in an elevated terminal:'
-            Write-Warn '  codex sandbox setup --elevated --current-user'
+            if ($a -like 'CodexSandbox*') {
+                Write-Warn 'the elevated sandbox creates it; run this in an elevated terminal:'
+                Write-Warn '  codex sandbox setup --elevated --current-user'
+            } else {
+                Write-Warn 'check the name. The sandbox accounts are CodexSandboxOffline and CodexSandboxOnline.'
+            }
             continue
         }
         Write-Note "$a -> $sid"
@@ -477,7 +481,14 @@ function Resolve-TargetSids {
         foreach ($n in @(Get-LocalAccountNames)) {
             if ($n -like $AccountPattern) {
                 $sid = Resolve-AccountSid $n
-                if ($sid) { Write-Note "$n -> $sid (matched '$AccountPattern')"; $wanted.Add($sid) }
+                if ($sid) {
+                    Write-Note "$n -> $sid (matched '$AccountPattern')"
+                    $wanted.Add($sid)
+                } else {
+                    # Silently dropping it would make the plan say that nothing
+                    # matched the pattern, which would be false.
+                    Write-Warn "the account '$n' matches '$AccountPattern', but its SID could not be read; it was not granted."
+                }
             }
         }
     }
@@ -857,8 +868,8 @@ function Get-CodexConfigValue {
     #>
     param([string] $Section, [string] $Key)
     $path = Join-Path (Get-CodexHome) 'config.toml'
-    if (-not (Test-Path -LiteralPath $path)) { return $null }
-    $lines = [IO.File]::ReadAllLines($path)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { $lines = [IO.File]::ReadAllLines($path) } catch { return $null }
     $inSection = ($Section -eq '')
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $t = $lines[$i].Trim()
@@ -995,11 +1006,22 @@ function Get-CodexSkill {
         HcUpToDate    = $false
         AppUpToDate   = $false
         MentionsWinHc = $false
+        Unreadable    = $false
+        NoCore        = $false
+        NoApp         = $false
         Wrapper       = ''
         Text          = ''
     }
-    if (-not (Test-Path -LiteralPath $path)) { return $state }
-    $text = [IO.File]::ReadAllText($path)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $state }
+    try {
+        $text = [IO.File]::ReadAllText($path)
+    } catch {
+        # The file is there but cannot be read: that is a fact about the
+        # machine, not a reason to throw the whole report away.
+        $state.Exists = $true
+        $state.Unreadable = $true
+        return $state
+    }
     $state.Exists = $true
     $state.Text = $text
     $state.GatesTerminal = $text.Contains('test -n "${HC_TERMINAL_ID:-}"')
@@ -1018,6 +1040,10 @@ function Get-CodexSkill {
         if ($r.ExitCode -eq 0 -and $r.Text) {
             $state.HcUpToDate = (& $norm $text).Contains((& $norm $r.Text))
         }
+    } else {
+        # Nothing to compare the manual with: saying the guide is "older" than
+        # a core that is not there would be false.
+        $state.NoCore = $true
     }
     $app = Get-HerdrAppPath
     if ($app) {
@@ -1025,6 +1051,8 @@ function Get-CodexSkill {
         if ($r.ExitCode -eq 0 -and $r.Text) {
             $state.AppUpToDate = (& $norm $text).Contains((& $norm $r.Text))
         }
+    } else {
+        $state.NoApp = $true
     }
     return $state
 }
@@ -1047,7 +1075,9 @@ function Update-CodexSkill {
             Write-Fail 'the guide head is not beside the tool; no guide was written.'
             return $false
         }
-        $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n").Trim()
+        # Not trimmed: the head ends with the "---" that separates it from the
+        # manual, and trimming it would glue the manual's first line onto it.
+        $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n")
         Write-Note "there is no $Agent guide yet; it is written from the head beside the tool"
     } else {
         if (-not $skill.Wrapper) {
@@ -1059,7 +1089,7 @@ function Update-CodexSkill {
             # The installed guide carries the WSL head. The head for this side is
             # in the tool's own assets folder.
             if (Test-Path -LiteralPath $ownHead) {
-                $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n").Trim()
+                $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n")
                 Write-Note 'the installed guide carried the WSL head; the head for this side replaces it'
             } else {
                 Write-Warn 'the installed guide carries the WSL head and the head for this side is not beside the tool; the head is kept as it is'
@@ -1069,8 +1099,15 @@ function Update-CodexSkill {
     $app = Get-HerdrAppPath
     if (-not $app) { Write-Fail 'herdr-app was not found, so the app manual cannot be read.'; return $false }
 
-    $hcText = (Invoke-Native -File $Hc -Arguments @('--skill')).Text
-    $appText = (Invoke-Native -File $app -Arguments @('--skill')).Text
+    # The exit code matters: a binary that does not know --skill prints an
+    # error, and that error would be written into the guide as if it were the
+    # manual.
+    $hcRun = Invoke-Native -File $Hc -Arguments @('--skill')
+    if ($hcRun.ExitCode -ne 0) { Write-Fail "the core did not print its manual (exit $($hcRun.ExitCode))."; return $false }
+    $appRun = Invoke-Native -File $app -Arguments @('--skill')
+    if ($appRun.ExitCode -ne 0) { Write-Fail "herdr-app did not print its manual (exit $($appRun.ExitCode))."; return $false }
+    $hcText = $hcRun.Text
+    $appText = $appRun.Text
     if (-not $hcText -or -not $appText) { Write-Fail 'a manual could not be read; not rewriting the skill.'; return $false }
 
     $new = $head + ($hcText -replace "`r`n", "`n").Trim() + "`n---`n`n" + ($appText -replace "`r`n", "`n").Trim() + "`n"
@@ -1096,17 +1133,21 @@ function Get-SkillProblems {
     param([string] $Agent, $Skill)
     $problems = New-Object System.Collections.Generic.List[string]
     Write-Note "skill           : $(if ($Skill.Exists) { $Skill.Path } else { 'not installed' })"
+    if ($Skill.Unreadable) {
+        $problems.Add("the $Agent guide at $($Skill.Path) exists but could not be read")
+        return $problems
+    }
     if (-not $Skill.Exists) {
         $problems.Add("the $Agent skill is not installed")
         return $problems
     }
     Write-Note "gate            : $(if ($Skill.GatesHerdrEnv) { 'HERDR_ENV (the 0.9.5 guide)' } elseif ($Skill.GatesTerminal) { 'HC_TERMINAL_ID' } else { 'unknown' })"
-    Write-Note "hc manual       : $(if ($Skill.HcUpToDate) { 'up to date' } else { 'older than the installed core' })"
-    Write-Note "app manual      : $(if ($Skill.AppUpToDate) { 'up to date' } else { 'older than the installed app' })"
+    Write-Note "hc manual       : $(if ($Skill.NoCore) { 'not checked - there is no core here' } elseif ($Skill.HcUpToDate) { 'up to date' } else { 'older than the installed core' })"
+    Write-Note "app manual      : $(if ($Skill.NoApp) { 'not checked - there is no herdr-app here' } elseif ($Skill.AppUpToDate) { 'up to date' } else { 'older than the installed app' })"
     if ($Skill.GatesHerdrEnv) { $problems.Add("the $Agent skill gates on HERDR_ENV; that guide belongs to the older herdr and stops the agent") }
     if (-not $Skill.GatesTerminal) { $problems.Add("the $Agent skill does not gate on HC_TERMINAL_ID") }
-    if (-not $Skill.HcUpToDate) { $problems.Add("the $Agent skill carries an older hc manual than the installed core") }
-    if (-not $Skill.AppUpToDate) { $problems.Add("the $Agent skill carries an older herdr-app manual than the installed app") }
+    if (-not $Skill.NoCore -and -not $Skill.HcUpToDate) { $problems.Add("the $Agent skill carries an older hc manual than the installed core") }
+    if (-not $Skill.NoApp -and -not $Skill.AppUpToDate) { $problems.Add("the $Agent skill carries an older herdr-app manual than the installed app") }
     if ($Skill.MentionsWinHc) { $problems.Add("the $Agent skill on this side carries the WSL head; it sends the agent to win-hc, which does not exist here") }
     return $problems
 }
@@ -1376,10 +1417,13 @@ switch ($Command) {
 
     'status' {
         $s = Show-Status -Hc $hc -GrantSids $grant
-        if (-not $s) { exit 1 }
+        # The guides are checked either way: a machine without a core still has
+        # agents that read them.
         $codex = Show-Codex -Hc $hc -GrantSids $grant
         Write-Log 'verdict' 'step'
-        if (-not $s.Patched) {
+        if (-not $s) {
+            Write-Note 'the installed core could not be read, so the pipe was not checked.'
+        } elseif (-not $s.Patched) {
             Write-Note 'the installed core has no support for the variable: run apply.'
         } elseif ($grant.Count -gt 0) {
             $granted = @(Get-DescriptorSids $s.Descriptor)
