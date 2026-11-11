@@ -60,23 +60,50 @@ jobs:
       - name: stamp the version into the docs
         shell: pwsh
         run: |
-          # The README, the skill and the plugin manifest name the release they
-          # belong to. The one-file executable carries the README and the
-          # skill, so the substitution happens here - in the checkout - and not
-          # in the staged copy afterwards, which would be too late for the
-          # executable.
+          # The README and the skill name the release they belong to. The
+          # one-file executable carries both, so the substitution happens here
+          # - in the checkout - and not in the staged copy afterwards, which
+          # would be too late for the executable.
           foreach ($file in @('README.md', 'skills/herdr-pipe-patch/SKILL.md')) {
               $text = [IO.File]::ReadAllText($file)
               $text = $text.Replace('0.1.20', $env:RELEASE_VERSION)
               [IO.File]::WriteAllText($file, $text, [System.Text.UTF8Encoding]::new($false))
               Write-Host "stamped $file with $env:RELEASE_VERSION"
           }
+
+      - name: check the plugin manifest
+        shell: pwsh
+        run: |
+          # The plugin is the repository itself: a plugin that declares a
+          # version stays on it until the manifest changes. The release
+          # cannot bump it - the checkout here is thrown away - so the
+          # manifest has to carry the release version already, and the job
+          # fails when it is behind. A release that goes out with a stale
+          # manifest leaves the people who installed the plugin on the old
+          # tool, and says nothing about it.
           $manifest = '.claude-plugin/plugin.json'
-          if (Test-Path -LiteralPath $manifest) {
-              $text = [IO.File]::ReadAllText($manifest)
-              $text = $text -replace '"version"\s*:\s*"[^"]*"', ('"version": "' + $env:RELEASE_VERSION + '"')
-              [IO.File]::WriteAllText($manifest, $text, [System.Text.UTF8Encoding]::new($false))
-              Write-Host "stamped $manifest with $env:RELEASE_VERSION"
+          if (-not (Test-Path -LiteralPath $manifest)) {
+              throw "there is no $manifest in this checkout"
+          }
+          $json = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+          $have = $json.version
+          $want = $env:RELEASE_VERSION
+          try {
+              $haveVersion = [version]$have
+              $wantVersion = [version]$want
+          } catch {
+              throw "the plugin manifest declares version '$have', which is not a version"
+          }
+          if ($haveVersion -lt $wantVersion) {
+              throw ("the plugin manifest declares version '$have', but this release is $want. " +
+                  "A plugin that declares a version stays on it until the manifest changes, so " +
+                  "the people who installed it would keep the old tool. Bump $manifest to $want " +
+                  "and commit it before you tag.")
+          }
+          if ($haveVersion -gt $wantVersion) {
+              Write-Host "the plugin manifest declares $have, which is newer than this release ($want): the plugin is not behind"
+          } else {
+              Write-Host "the plugin manifest carries $want"
           }
 
       - name: set up rust
@@ -129,6 +156,24 @@ jobs:
       - name: build the single-file executable
         shell: cmd
         run: launcher\build.cmd
+
+      - name: check what the executable carries
+        shell: pwsh
+        run: |
+          # The executable carries the README and the skill it was built from.
+          # If those still name another release, the one-file form sends people
+          # to download the wrong zip - so the job fails here rather than in
+          # somebody else's terminal.
+          foreach ($file in @('launcher/tree/README.md', 'launcher/tree/skills/herdr-pipe-patch/SKILL.md')) {
+              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                  throw "the executable does not carry $file"
+              }
+              $text = [IO.File]::ReadAllText($file)
+              if (-not $text.Contains($env:RELEASE_VERSION)) {
+                  throw "$file does not name $env:RELEASE_VERSION"
+              }
+              Write-Host "$file names $env:RELEASE_VERSION"
+          }
 
       - name: package
         shell: pwsh

@@ -82,46 +82,116 @@ fn main() -> ExitCode {
 }
 
 /// PowerShell refuses a parameter that is given twice, so "-Account A
-/// -Account B" fails before the script sees it. The names are joined into one
-/// comma-separated value instead, which the script splits.
+/// -Account B" fails before the script sees it. The values are joined into one
+/// comma-separated value instead, which the script splits. Both the space form
+/// and the "=" form are recognised, and the same is done for -Sids: the script
+/// splits both on a comma and on a semicolon.
 fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
-    let mut names: Vec<String> = Vec::new();
+    // The parameters whose value may be given more than once.
+    const JOINED: [&str; 2] = ["-Account", "-Sids"];
+
+    // Every occurrence of such a parameter, and the tokens it covers.
+    struct Occurrence {
+        start: usize,
+        end: usize,
+        name: String,
+        values: Vec<String>,
+    }
+
+    let mut occurrences: Vec<Occurrence> = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        if args[i].to_string_lossy().eq_ignore_ascii_case("-Account") {
-            i += 1;
-            while i < args.len() && !args[i].to_string_lossy().starts_with('-') {
-                names.push(args[i].to_string_lossy().to_string());
+        let text = args[i].to_string_lossy().to_string();
+        let (name, inline) = match split_parameter(&text) {
+            Some(parts) => parts,
+            None => {
                 i += 1;
+                continue;
             }
+        };
+        if !JOINED.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
+            i += 1;
             continue;
         }
-        i += 1;
+        let mut values = Vec::new();
+        let mut end = i + 1;
+        match inline {
+            Some(value) => values.push(value),
+            None => {
+                while end < args.len() && !args[end].to_string_lossy().starts_with('-') {
+                    values.push(args[end].to_string_lossy().to_string());
+                    end += 1;
+                }
+            }
+        }
+        occurrences.push(Occurrence {
+            start: i,
+            end,
+            name,
+            values,
+        });
+        i = end;
     }
-    if names.len() < 2 {
-        return args.to_vec();
+
+    // The values of each parameter, in the order they were given.
+    let mut values_of: Vec<(String, Vec<String>)> = Vec::new();
+    for occurrence in &occurrences {
+        match values_of
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
+        {
+            Some((_, values)) => values.extend(occurrence.values.iter().cloned()),
+            None => values_of.push((occurrence.name.clone(), occurrence.values.clone())),
+        }
     }
-    let joined = names.join(",");
+
     let mut out: Vec<OsString> = Vec::new();
-    let mut emitted = false;
+    let mut joined: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
-        if args[i].to_string_lossy().eq_ignore_ascii_case("-Account") {
-            i += 1;
-            while i < args.len() && !args[i].to_string_lossy().starts_with('-') {
+        let occurrence = match occurrences.iter().find(|o| o.start == i) {
+            Some(occurrence) => occurrence,
+            None => {
+                out.push(args[i].clone());
                 i += 1;
+                continue;
             }
-            if !emitted {
-                out.push(OsString::from("-Account"));
-                out.push(OsString::from(joined.clone()));
-                emitted = true;
+        };
+        let values = values_of
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&occurrence.name))
+            .map(|(_, values)| values.clone())
+            .unwrap_or_default();
+        if values.len() > 1 && !joined.iter().any(|n| n.eq_ignore_ascii_case(&occurrence.name)) {
+            // The space form, not "name=value": a value that holds a $ or a
+            // quote must reach PowerShell exactly as it was written.
+            joined.push(occurrence.name.clone());
+            out.push(OsString::from(occurrence.name.clone()));
+            out.push(OsString::from(values.join(",")));
+        } else if values.len() <= 1 {
+            // One value, given once: the tokens are left as they are.
+            for arg in &args[occurrence.start..occurrence.end] {
+                out.push(arg.clone());
             }
-            continue;
         }
-        out.push(args[i].clone());
-        i += 1;
+        // More than one value and this is not the first occurrence: the values
+        // are already in the one that was emitted.
+        i = occurrence.end;
     }
     out
+}
+
+/// The parameter name and the value of one argument, if it is a parameter at
+/// all: "-Account", "-Account=Alice", or "-AccountPattern" (which takes its
+/// value from the next argument).
+fn split_parameter(arg: &str) -> Option<(String, Option<String>)> {
+    if !arg.starts_with('-') || arg.len() < 2 {
+        return None;
+    }
+    match arg.find('=') {
+        Some(at) => Some((arg[..at].to_string(), Some(arg[at + 1..].to_string()))),
+        None => Some((arg.to_string(), None)),
+    }
 }
 
 /// Where the tool is unpacked: a marker directory under LOCALAPPDATA, so a new

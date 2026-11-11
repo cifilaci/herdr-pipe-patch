@@ -20,6 +20,12 @@
 #
 # Requires: a POSIX shell, `hc` on PATH (the herdr-core of this machine) and
 # a Windows herdr-core for the wrapper.
+#
+# The exit codes, one meaning each:
+#   0  everything that was asked for is done
+#   1  one part is done and the other is not
+#   2  nothing was installed
+#   3  the command line was wrong
 
 set -eu
 
@@ -56,7 +62,6 @@ if [ -z "$home" ]; then
 fi
 
 say() { printf '%s\n' "$*"; }
-fail() { printf 'x %s\n' "$*" >&2; exit 1; }
 
 install_wrapper() {
     # The guide is built from the manual 'hc' prints, so a machine without hc
@@ -139,6 +144,13 @@ $(printf '%s' "$manual" | tr -d '\r')
         wrote=1
     done
     if [ "$failed" = 1 ]; then
+        if [ "$wrote" = 1 ]; then
+            # Some of the folders took the guide and some did not. Saying
+            # "nothing was installed" would be false: one of them has it.
+            say "    x not every guide could be written"
+            return 2
+        fi
+        say "    x no guide was written"
         return 1
     fi
     if [ "$dry_run" = 0 ] && [ "$wrote" = 0 ]; then
@@ -192,40 +204,73 @@ esac
 #   2  nothing was installed
 #   3  the command line was wrong
 say "installing into: $home/.claude/skills, $home/.codex/skills"
-guide_done=0
-guide_failed=0
-wrapper_done=0
-wrapper_failed=0
+
+# What each part is: none, some or all. "some" is a real outcome - one of the
+# two guide folders can take the guide and the other cannot - and calling it
+# "nothing was installed" would be false.
+guide_state=none
+wrapper_state=none
 if [ "$only" = all ] || [ "$only" = guide ]; then
-    if install_wrapper; then guide_done=1; else guide_failed=1; fi
+    if install_wrapper; then
+        guide_state=all
+    else
+        rc=$?
+        if [ "$rc" = 2 ]; then guide_state=some; else guide_state=none; fi
+    fi
 fi
 if [ "$only" = all ] || [ "$only" = wrapper ]; then
-    if install_win_hc; then wrapper_done=1; else wrapper_failed=1; fi
+    if install_win_hc; then wrapper_state=all; else wrapper_state=none; fi
 fi
 if [ "$dry_run" = 1 ]; then
     say "dry run: nothing was changed"
     exit 0
 fi
-if [ "$guide_failed" = 1 ] && [ "$wrapper_failed" = 1 ]; then
-    say "done: nothing was installed"
+
+ask_guide=0
+ask_wrapper=0
+if [ "$only" = all ] || [ "$only" = guide ]; then ask_guide=1; fi
+if [ "$only" = all ] || [ "$only" = wrapper ]; then ask_wrapper=1; fi
+
+if [ "$ask_guide" = 1 ] && [ "$ask_wrapper" = 1 ]; then
+    if [ "$guide_state" = all ] && [ "$wrapper_state" = all ]; then
+        say "done"
+        exit 0
+    fi
+    if [ "$guide_state" = none ] && [ "$wrapper_state" = none ]; then
+        say "done: nothing was installed"
+        exit 2
+    fi
+    if [ "$guide_state" = some ]; then
+        if [ "$wrapper_state" = all ]; then
+            say "done: the win-hc wrapper and some of the guides are installed, but not every guide could be written"
+        else
+            say "done: some of the guides are installed, but not every guide could be written"
+        fi
+        exit 1
+    fi
+    if [ "$guide_state" = all ]; then
+        say "done: the guide is installed, but the win-hc wrapper was not written"
+        exit 1
+    fi
+    say "done: the win-hc wrapper is installed, but the guide was not written"
+    exit 1
+fi
+if [ "$ask_guide" = 1 ]; then
+    if [ "$guide_state" = all ]; then
+        say "done"
+        exit 0
+    fi
+    if [ "$guide_state" = some ]; then
+        say "done: some of the guides are installed, but not every guide could be written"
+        exit 1
+    fi
+    say "done: nothing was installed - the guide could not be written"
     exit 2
 fi
-if [ "$guide_failed" = 1 ]; then
-    if [ "$wrapper_done" = 1 ]; then
-        say "done: the win-hc wrapper is installed, but the guide was not written"
-    else
-        say "done: nothing was installed - the guide could not be written"
-        exit 2
-    fi
-    exit 1
+# Only the wrapper was asked for.
+if [ "$wrapper_state" = all ]; then
+    say "done"
+    exit 0
 fi
-if [ "$wrapper_failed" = 1 ]; then
-    if [ "$guide_done" = 1 ]; then
-        say "done: the guide is installed, but the win-hc wrapper was not written"
-    else
-        say "done: nothing was installed - the wrapper could not be written"
-        exit 2
-    fi
-    exit 1
-fi
-say "done"
+say "done: nothing was installed - the wrapper could not be written"
+exit 2

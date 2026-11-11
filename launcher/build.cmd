@@ -3,10 +3,16 @@ rem Rebuilds the single-file herdr-pipe-patch.exe.
 rem
 rem The executable carries the script, the patched core and the patch inside it,
 rem so a change to any of them means a rebuild: the files are copied into
-rem launcher\assets first, then the exe is built and copied back.
+rem launcher\tree first, then the exe is built and copied back.
+rem
+rem The tree is a build artefact - it is not in the repository - and it is
+rem rebuilt from the repository every time. build.rs then checks it against
+rem the list the executable carries, and fails the build when the two differ:
+rem a file in the repository that the executable does not carry would be in the
+rem released zip and missing from the one-file form.
 rem
 rem The payload folder is copied whole, so a new herdr-core version needs no
-rem change here - build.rs picks up whatever is in assets\payload.
+rem change here - build.rs picks up whatever is in payload\.
 rem
 rem Needs Rust (cargo) and the MSVC toolchain; nothing else.
 setlocal

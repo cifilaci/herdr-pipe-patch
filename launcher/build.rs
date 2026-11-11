@@ -4,7 +4,7 @@
 //! payload, the skill and the installers that put the skill in place. The
 //! payload is a patched herdr-core for one version; the version is not written
 //! into the source - a build script reads the payload folder and emits the
-//! list, so the launcher carries whatever version was put in `assets`.
+//! list, so the launcher carries whatever version was put in `tree`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -124,8 +124,47 @@ fn main() {
     // the one-file form, and nothing would say so.
     let mut in_tree: Vec<String> = Vec::new();
     collect_files(&assets, &assets, &mut in_tree).expect("cannot read the tree");
-    in_tree.retain(|p| !p.starts_with("payload/"));
-    for relative in &in_tree {
+
+    // The payload is carried as three files per version, so the payload part
+    // of the tree is checked against those three: a fourth file there would
+    // be in the released zip and missing from the one-file form.
+    const PAYLOAD_FILES: [&str; 3] = ["herdr-core.exe", "herdr-core.exe.sha256", "BUILD.txt"];
+    // Only version folders may sit in the payload: a loose file there is in
+    // the released zip and in nobody's executable.
+    if let Ok(entries) = fs::read_dir(&payload_root) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                panic!(
+                    "payload/{} is a file, but only version folders may sit in the payload.",
+                    entry.file_name().to_string_lossy()
+                );
+            }
+        }
+    }
+    for version in &versions {
+        let dir = payload_root.join(version);
+        let mut in_payload: Vec<String> = Vec::new();
+        collect_files(&dir, &dir, &mut in_payload).expect("cannot read the payload");
+        for relative in &in_payload {
+            if !PAYLOAD_FILES.contains(&relative.as_str()) {
+                panic!(
+                    "payload/{version}/{relative} is in the tree but the executable does not carry it. \
+                     The payload carries the core, its checksum and BUILD.txt - take the file out \
+                     of the tree, or carry it in the launcher.",
+                    version = version
+                );
+            }
+        }
+        for expected in PAYLOAD_FILES {
+            if !in_payload.iter().any(|p| p == expected) {
+                panic!("payload/{version}/{expected} is missing: the payload is not complete.", version = version);
+            }
+        }
+    }
+
+    let mut carried_tree: Vec<String> = in_tree.clone();
+    carried_tree.retain(|p| !p.starts_with("payload/"));
+    for relative in &carried_tree {
         if !EXTRA.contains(&relative.as_str()) {
             panic!(
                 "{} is in the tree but not in EXTRA, so the executable would not carry it. \
@@ -135,7 +174,7 @@ fn main() {
         }
     }
     for relative in EXTRA {
-        if !in_tree.iter().any(|p| p == relative) {
+        if !carried_tree.iter().any(|p| p == relative) {
             panic!("{} is in EXTRA but not in the tree.", relative);
         }
     }
@@ -143,6 +182,14 @@ fn main() {
     let out_file = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("payloads.rs");
     fs::write(&out_file, out).expect("cannot write the generated file list");
 
+    // Cargo's fingerprint for a directory is the newest file under it, so a
+    // file that was taken out of the tree would not run this script again -
+    // the build would fail later with a confusing error from include_bytes!.
+    // Every file is named on its own, so taking one out changes the
+    // fingerprint and the checks above run.
+    for relative in &in_tree {
+        println!("cargo:rerun-if-changed=tree/{relative}");
+    }
     println!("cargo:rerun-if-changed=tree");
 }
 

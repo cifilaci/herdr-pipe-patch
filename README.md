@@ -361,7 +361,7 @@ herdr-pipe-patch\
   patches\
     herdr-core-pipe-extra-sids.patch    the upstream diff
   payload\
-    0.1.20\
+    0.1.20\                           one folder per built version
       herdr-core.exe                   a prebuilt patched core
       herdr-core.exe.sha256            its checksum
       BUILD.txt                        where it came from
@@ -387,8 +387,11 @@ compiler. The one-file executable is built from `launcher\`:
 launcher\build.cmd
 ```
 
-which copies the files into `launcher\assets`, runs `cargo build --release` and
-puts the new `herdr-pipe-patch.exe` back in the folder.
+which copies the files into `launcher\tree`, runs `cargo build --release` and
+puts the new `herdr-pipe-patch.exe` back in the folder. The build fails when a
+file in the tree is not carried by the executable, or when one of the files the
+executable carries is missing from the tree: the released zip and the one-file
+form would otherwise differ, and nothing would say so.
 
 ### The release
 
@@ -401,14 +404,20 @@ The tag names the herdr-core version the payload was built from: the tag
 3. builds the core,
 4. **proves it** — the binary is run as an isolated core and its pipe descriptor
    read back; the job fails if it does not grant the SIDs,
-5. builds the one-file executable,
-6. publishes the tool zip, the executable, the patched core on its own, and a
+5. stamps the release's version into the README and the skill — the
+   one-file executable carries both, so it has to happen before it is built,
+6. checks that the plugin manifest carries the same version,
+7. builds the one-file executable, and checks that what it carries names that
+   version too,
+8. publishes the tool zip, the executable, the patched core on its own, and a
    `.sha256` beside every asset.
 
 The plugin manifest (`.claude-plugin/plugin.json`) carries the payload's
 version, and a plugin that declares a `version` stays on it until the manifest
-changes. Bump it with every release, or the people who installed the plugin
-keep the old tool.
+changes — so the people who installed the plugin keep the tool the manifest
+names. **Bump it and commit before you tag.** The release checks it: a tag
+whose manifest still carries another version fails the job, rather than
+publishing a release that quietly leaves the plugin behind.
 
 `.claude-plugin/marketplace.json` is what makes the repository a marketplace:
 it lists the plugin, whose `source` is `"./"` — the repository root, which is
@@ -431,8 +440,10 @@ root.
   merged and released. After an update, run `status`; it will say the core needs
   the patch again, and `apply` will fix it. `build -Version <v>` builds a
   patched core for the new version if the bundled payload does not match.
-- **The bundled payload is 0.1.20.** `apply` looks for `payload\<installed
-  version>\`, and falls back to building one from the tag when there is none.
+- **The release ships a patched core for its own version.** `apply` looks for
+  `payload\<installed version>\`, and falls back to building one from the tag
+  when there is none. The payload folder can hold more than one version; the
+  one that matters is the one that matches the core you have.
 - **The codex skill goes stale when the core is updated.** It is a copy of the
   manuals the binaries printed at the time; `status` says when it is older than
   the installed core, and `apply` rebuilds it.

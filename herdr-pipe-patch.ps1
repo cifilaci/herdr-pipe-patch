@@ -270,6 +270,13 @@ function Get-HcPath {
     # another installation would quietly patch the wrong thing.
     if ($Explicit) {
         if (-not (Test-Path -LiteralPath $Explicit -PathType Leaf)) {
+            # "there is no file at X" reads as a missing core, but the value
+            # can be something else entirely: a second account name that was
+            # given with a space instead of a comma binds to this parameter,
+            # because it is the next positional one.
+            if ($Explicit -notmatch '\.exe$') {
+                Stop-Tool "there is no file at '$Explicit'. If that was an account name, give the names separated by a comma: -Account Alice,Bob - a space between them binds the next argument instead."
+            }
             Stop-Tool "there is no file at $Explicit."
         }
         if (-not (Get-HcVersion $Explicit)) {
@@ -458,15 +465,20 @@ function Resolve-TargetSids {
     foreach ($a in $accountNames) {
         $sid = Resolve-AccountSid $a
         if (-not $sid) {
-            # The account does not exist here. The advice depends on which
-            # account it is: the elevated sandbox creates the accounts it runs
-            # as, and nothing creates any other one.
+            # The account does not exist here. The advice depends on the
+            # machine and on the name: the elevated sandbox creates the
+            # accounts it runs as, and nothing creates any other one - so
+            # telling somebody to run the setup would be false twice over
+            # when the sandbox accounts are already here.
             Write-Warn "there is no account '$a' on this machine."
-            if ($a -like 'CodexSandbox*') {
+            $sandboxHere = @(Get-CodexSandboxAccounts)
+            if ($a -like 'CodexSandbox*' -and $sandboxHere.Count -eq 0) {
                 Write-Warn 'the elevated sandbox creates it; run this in an elevated terminal:'
                 Write-Warn '  codex sandbox setup --elevated --current-user'
+            } elseif ($sandboxHere.Count -gt 0) {
+                Write-Warn "the sandbox accounts exist here ($($sandboxHere.Name -join ', ')), but not under that name. Give the name that exists, or its SID."
             } else {
-                Write-Warn 'check the name. The sandbox accounts are CodexSandboxOffline and CodexSandboxOnline.'
+                Write-Warn 'the elevated sandbox creates only CodexSandboxOffline and CodexSandboxOnline; check the name.'
             }
             continue
         }
@@ -1098,6 +1110,13 @@ function Update-CodexSkill {
     }
     $app = Get-HerdrAppPath
     if (-not $app) { Write-Fail 'herdr-app was not found, so the app manual cannot be read.'; return $false }
+    if (-not $Hc) {
+        # The guide is built from the manuals the two binaries print. Without
+        # the core there is no hc manual, and a guide that carries only half
+        # of it would send the agent looking for commands it does not have.
+        Write-Fail 'there is no core on this machine, so the hc manual cannot be read; the guide was not rewritten.'
+        return $false
+    }
 
     # The exit code matters: a binary that does not know --skill prints an
     # error, and that error would be written into the guide as if it were the
@@ -1272,7 +1291,11 @@ function Repair-Codex {
     foreach ($agent in @('codex', 'claude')) {
         $skill = Get-CodexSkill -Hc $Hc -Agent $agent
         if (-not $skill.Exists) {
-            Write-Note "$agent skill: not installed - it is written from the manuals the installed binaries print"
+            if ($Hc) {
+                Write-Note "$agent skill: not installed - it is written from the manuals the installed binaries print"
+            } else {
+                Write-Note "$agent skill: not installed - it cannot be written without a core on this machine"
+            }
         } elseif (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc) {
             Write-Note "$agent skill: rebuild it from the manuals the installed binaries print"
         }
@@ -1442,7 +1465,16 @@ switch ($Command) {
     }
 
     'apply' {
-        if (-not $hc) { Stop-Tool 'no herdr-core found on this machine.' }
+        if (-not $hc) {
+            # No core: the pipe cannot be patched, but the guides are files and
+            # a machine without a core still has agents that read them. The
+            # codex side is done first, so the promise the dry run makes is
+            # kept even here.
+            Write-Warn 'no herdr-core found on this machine: the pipe was not touched.'
+            Write-Note "looked in: the app's settings.json, PATH, %LOCALAPPDATA%\Programs\herdr-core, ~\.cargo\bin"
+            Repair-Codex -Hc $null -GrantSids $grant -DryRun:$DryRun
+            Stop-Tool 'there is no core to patch. The codex side was looked at; install herdr-core and run apply again.'
+        }
         # No accounts to grant is not a dead end: the patched core does not need
         # them. The core goes in, and the person is told to provision the
         # sandbox and run apply again for the grants.
@@ -1450,9 +1482,16 @@ switch ($Command) {
         if ($noGrants) {
             Write-Warn 'there is nothing to grant: no account on this machine matches what was asked for.'
             Write-Warn 'the patched core goes in anyway - it does not need the accounts.'
-            Write-Warn 'if the elevated sandbox is not set up yet, run this in an elevated terminal:'
-            Write-Warn '  codex sandbox setup --elevated --current-user'
-            Write-Warn 'and run apply again afterwards, to grant the sandbox accounts.'
+            # The advice depends on the machine: where the sandbox accounts
+            # exist, running the setup again would not create anything.
+            $sandboxHere = @(Get-CodexSandboxAccounts)
+            if ($sandboxHere.Count -eq 0) {
+                Write-Warn 'the elevated sandbox is not set up yet; run this in an elevated terminal:'
+                Write-Warn '  codex sandbox setup --elevated --current-user'
+                Write-Warn 'and run apply again afterwards, to grant the sandbox accounts.'
+            } else {
+                Write-Warn "the sandbox accounts here are $($sandboxHere.Name -join ', '): name one of them, or give its SID, to grant it."
+            }
         }
 
         # The SIDs the installed core will actually grant. This is worked out
@@ -1492,6 +1531,15 @@ switch ($Command) {
             exit 0
         }
 
+        # The codex side comes before the core work, not after it: a guide that
+        # was promised and then lost because the core would not install is a
+        # promise broken, and the guide does not depend on the core step at
+        # all - it is built from the manuals the installed binaries print, and
+        # the candidate is the same version as the installed core, so the
+        # manual is the same either way.
+        Write-Step 'the codex side'
+        Repair-Codex -Hc $hc -GrantSids $grant
+
         if (-not $s.Patched) {
             $candidate = Get-PatchedCore -WantedVersion $installedVersion -GrantSids $grantSids -AllowBuild
 
@@ -1526,9 +1574,6 @@ switch ($Command) {
         if (-not $restart.Ok) { Stop-Tool "the core did not come back: $($restart.Result.Text)" }
         Write-Note "restarted with: $($restart.How)"
         Start-Sleep -Milliseconds 1200
-
-        Write-Step 'the codex side'
-        Repair-Codex -Hc $hc -GrantSids $grant
 
         Write-Step 'verifying'
         $after = Show-Status -Hc $hc -GrantSids $grant
