@@ -1,6 +1,6 @@
 {
   "name": "herdr-pipe-patch",
-  "description": "The herdr-core pipe patch, as a Claude Code plugin.",
+  "description": "The herdr-core pipe patch, as a plugin for Claude Code and codex.",
   "owner": {
     "name": "Laszlo Czifranics"
   },

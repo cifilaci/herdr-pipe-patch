@@ -58,11 +58,15 @@ Two things make this worth a tool rather than a one-off change:
 
 ## Install
 
-### As a Claude Code plugin
+### As a plugin
 
-This repository is a plugin marketplace with one plugin in it, so a machine that
-runs Claude Code can take the whole thing — the skill and the tool — in one
-step:
+This repository is a plugin marketplace with one plugin in it, and **two agents
+read the same manifest**: Claude Code and codex both look for
+`.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json`. So a
+machine that runs either one can take the whole thing — the skill and the tool —
+in one step.
+
+**Claude Code:**
 
 ```
 /plugin install herdr-pipe-patch --marketplace cifilaci/herdr-pipe-patch
@@ -73,6 +77,20 @@ or, on Claude Code 2.1.275 or later, from the shell in one command:
 ```
 claude plugin install herdr-pipe-patch --marketplace cifilaci/herdr-pipe-patch
 ```
+
+**codex:**
+
+```
+codex plugin marketplace add cifilaci/herdr-pipe-patch
+codex plugin add herdr-pipe-patch@herdr-pipe-patch
+```
+
+codex prefers `.codex-plugin/` when a repository has one and falls back to
+`.claude-plugin/`, so the same two files serve both products. The plugin lands
+in `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`, and the agent
+sees the skill namespaced as `herdr-pipe-patch:herdr-pipe-patch`. Both products
+name the plugin's own folder `${CLAUDE_PLUGIN_ROOT}`, so one skill file serves
+both.
 
 The skill then walks the agent through the whole flow, and the tool comes with
 it: the script, the patch and the prebuilt patched core.
@@ -218,8 +236,8 @@ matches `-AccountPattern` (default `CodexSandbox*`).
 
 | Command | What it does |
 |---|---|
-| `status` | Read-only. The installed core, whether it carries the patch, the user-level variable, the live pipe's descriptor, the codex side, and a verdict. |
-| `apply` | Installs a patched core if the installed one lacks it, sets the variable (process + user level), restarts the core, repairs the codex side, and verifies both. |
+| `status` | Read-only. The installed core, whether it carries the patch, the user-level variable, the live pipe's descriptor, the codex settings, both agents' guides, and a verdict. |
+| `apply` | Installs a patched core if the installed one lacks it, sets the variable (process + user level), restarts the core, repairs the codex settings and both agents' guides, and verifies both. |
 | `unpatch` | Restores the stock core, removes the variable, restarts the core, verifies the grants are gone. |
 | `verify` | The live descriptor, `hc server status` and the codex side. With `-Probe`, a real sandboxed client drives the core. |
 | `build` | Builds a patched core for a version and stores it as a payload. |
