@@ -1,0 +1,14 @@
+{
+  "name": "herdr-pipe-patch",
+  "description": "The herdr-core pipe patch, as a Claude Code plugin.",
+  "owner": {
+    "name": "Laszlo Czifranics"
+  },
+  "plugins": [
+    {
+      "name": "herdr-pipe-patch",
+      "source": "./",
+      "description": "Grant other accounts access to the herdr-core pipes on Windows, and take it back again."
+    }
+  ]
+}

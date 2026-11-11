@@ -1,0 +1,21 @@
+{
+  "name": "herdr-pipe-patch",
+  "displayName": "Herdr Pipe Patch",
+  "version": "0.1.20",
+  "description": "Grant other accounts access to the herdr-core pipes on Windows, and take it back again.",
+  "author": {
+    "name": "Laszlo Czifranics"
+  },
+  "homepage": "https://github.com/cifilaci/herdr-pipe-patch",
+  "repository": "https://github.com/cifilaci/herdr-pipe-patch",
+  "license": "Apache-2.0",
+  "keywords": [
+    "herdr",
+    "herdr-core",
+    "windows",
+    "pipe",
+    "dacl",
+    "codex",
+    "sandbox"
+  ]
+}

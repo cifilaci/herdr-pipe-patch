@@ -43,6 +43,17 @@ does start one — do not use it to look around.
 
 ## Get the tool
 
+The tool is one script with the payload beside it, and it runs from the folder
+it lives in:
+
+- **as a plugin** — this skill came from the plugin, and the folder is
+  `${CLAUDE_PLUGIN_ROOT}`. Claude Code writes the plugin's absolute path into
+  that line when it loads the skill; run the script by that path. When this
+  skill was installed as a plain file, the text is left as it is and the tool
+  is wherever it was unpacked.
+- **from the release zip** — the folder you unpacked it into
+- **from a clone of the repository** — the repository root
+
 The tool is in this repository; a release also carries it as a zip. If you have
 the repository, use it:
 
@@ -62,11 +73,16 @@ curl.exe -fsSL -o $zip "$base/herdr-pipe-patch-$version.zip"
 # compare with the published .sha256 before unpacking
 $want = (curl.exe -fsSL "$base/herdr-pipe-patch-$version.zip.sha256").Split()[0]
 $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
-if ($got -ne $want) { throw "the download is damaged: $got, expected $want" }
+if ($got -ne $want) { throw "not the published file: $got, expected $want" }
 
 Expand-Archive -Force $zip "$env:TEMP\herdr-pipe-patch-$version"
 cd "$env:TEMP\herdr-pipe-patch-$version"
 ```
+
+A checksum that does not match is usually **not** a damaged download: when a
+release is re-published, the download service keeps serving the previous file
+for a while, and the checksum beside it is already the new one. Wait a few
+minutes and download again.
 
 The zip holds the script, the patch and a prebuilt patched core, so no compiler
 is needed. `herdr-pipe-patch.exe` is the same tool in one file if you only want
@@ -94,7 +110,7 @@ On a machine where codex runs its elevated sandbox, the accounts are
 `CodexSandboxOffline` and `CodexSandboxOnline`; the tool finds them by pattern:
 
 ```powershell
-.\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline -Account CodexSandboxOnline
+.\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline,CodexSandboxOnline
 ```
 
 or by SID, or with `-Sids`. `status` prints the SIDs the pipe currently grants. `apply`

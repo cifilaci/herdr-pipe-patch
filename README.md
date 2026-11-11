@@ -58,6 +58,30 @@ Two things make this worth a tool rather than a one-off change:
 
 ## Install
 
+### As a Claude Code plugin
+
+This repository is a plugin marketplace with one plugin in it, so a machine that
+runs Claude Code can take the whole thing — the skill and the tool — in one
+step:
+
+```
+/plugin install herdr-pipe-patch --marketplace cifilaci/herdr-pipe-patch
+```
+
+or, on Claude Code 2.1.275 or later, from the shell in one command:
+
+```
+claude plugin install herdr-pipe-patch --marketplace cifilaci/herdr-pipe-patch
+```
+
+The skill then walks the agent through the whole flow, and the tool comes with
+it: the script, the patch and the prebuilt patched core.
+
+What a plugin cannot do is the one step that needs an administrator —
+`codex sandbox setup --elevated --current-user`. The skill says to stop and
+ask for it. A plugin also does not change what `apply` does: it still restarts
+the core, and it still grants the accounts the elevated sandbox runs as.
+
 ### One file
 
 [`herdr-pipe-patch.exe`](https://github.com/cifilaci/herdr-pipe-patch/releases)
@@ -98,7 +122,11 @@ $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
 if ($got -ne $want) { throw "the download is not the published file: $got, expected $want" }
 
 Expand-Archive -Force $zip "$env:TEMP\herdr-pipe-patch-$version"
+cd "$env:TEMP\herdr-pipe-patch-$version"
 ```
+
+The zip is flat, so the tool sits at the top of the folder the archive is
+expanded into. The commands below are relative to it, so `cd` there first.
 
 The checksum proves the download is intact. It is not signed, so it does not
 prove who published it.
@@ -168,7 +196,7 @@ export PATH="$HOME/.local/bin:$PATH"
 .\herdr-pipe-patch.ps1 status
 
 # grant accounts, by name (their user SIDs are resolved on this machine)
-.\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline -Account CodexSandboxOnline
+.\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline,CodexSandboxOnline
 
 # or grant by SID
 .\herdr-pipe-patch.ps1 apply -Sids "S-1-5-21-…-1010;S-1-5-21-…-1011"
@@ -203,7 +231,7 @@ matches `-AccountPattern` (default `CodexSandbox*`).
 | `-HcPath <path>` | The `hc` to manage. Default: the one this machine would use (the app's `settings.json`, then `PATH`, then `%LOCALAPPDATA%\Programs\herdr-core`, then `~\.cargo\bin`). A path given here is used as it is: if it is not a working hc the tool stops, rather than quietly managing a different one. |
 | `-Session <name>` | The core session. Default `default`. |
 | `-Sids <list>` | SIDs to grant, separated by `,` or `;`. |
-| `-Account <name>` | Accounts to grant, by name. Repeatable. |
+| `-Account <names>` | Accounts to grant, by name. Several names are separated by a comma: `-Account Alice,Bob`. |
 | `-AccountPattern <glob>` | Which accounts to grant when neither of the above is given. Default `CodexSandbox*`. |
 | `-Version <v>` | The version for `build`. |
 | `-DryRun` | Print the plan, change nothing. |
@@ -231,6 +259,7 @@ codex
     sandbox accounts: CodexSandboxOffline, CodexSandboxOnline
     sandbox service : CodexSandboxService.OpenAI.Codex (Running)
     app-server      : running
+    ! a shared app-server daemon is running. Codex sessions started without --no-daemon use it, and it froze the pane environment before.
     skill           : C:\Users\Cifi\.codex\skills\herdr\SKILL.md
     gate            : HC_TERMINAL_ID
     hc manual       : up to date
@@ -357,6 +386,18 @@ The tag names the herdr-core version the payload was built from: the tag
 5. builds the one-file executable,
 6. publishes the tool zip, the executable, the patched core on its own, and a
    `.sha256` beside every asset.
+
+The plugin manifest (`.claude-plugin/plugin.json`) carries the payload's
+version, and a plugin that declares a `version` stays on it until the manifest
+changes. Bump it with every release, or the people who installed the plugin
+keep the old tool.
+
+`.claude-plugin/marketplace.json` is what makes the repository a marketplace:
+it lists the plugin, whose `source` is `"./"` — the repository root, which is
+the plugin's own directory. The entry's name and the manifest's name have to be
+the same, or the install fails with `Plugin "<name>" not found in marketplace
+"<marketplace>"`. Check both with `claude plugin validate .` in the repository
+root.
 
 ---
 
