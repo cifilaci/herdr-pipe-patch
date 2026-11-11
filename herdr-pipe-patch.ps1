@@ -426,7 +426,9 @@ function Get-AccountNames {
     $names = New-Object System.Collections.Generic.List[string]
     foreach ($a in @($Account)) {
         if ($null -eq $a) { continue }
-        foreach ($n in ($a -split ',')) {
+        # Comma or semicolon, like -Sids: neither can be part of an account
+        # name, so splitting on both is safe.
+        foreach ($n in ($a -split '[,;]')) {
             $t = $n.Trim()
             if ($t) { $names.Add($t) }
         }
