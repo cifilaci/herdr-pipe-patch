@@ -46,11 +46,15 @@ does start one — do not use it to look around.
 The tool is one script with the payload beside it, and it runs from the folder
 it lives in:
 
-- **as a plugin** — this skill came from the plugin, and the folder is
-  `${CLAUDE_PLUGIN_ROOT}`. Claude Code writes the plugin's absolute path into
-  that line when it loads the skill; run the script by that path. When this
-  skill was installed as a plain file, the text is left as it is and the tool
-  is wherever it was unpacked.
+- **as a plugin** — this skill came from the plugin, and the plugin's own
+  folder is the one that holds `skills/`: from this file it is two levels up,
+  so the script is `../../herdr-pipe-patch.ps1`. Claude Code expands
+  `${CLAUDE_PLUGIN_ROOT}` to that same folder; codex does not, so use the
+  relative path. Everything else this skill names — `install-skill.ps1`,
+  `install-skill-wsl.sh`, `assets/win-hc`, `patches/`, `payload/` — is in that
+  folder too. When this skill was installed as a plain file — by
+  `install-skill.ps1` into `~/.codex/skills/` or `~/.claude/skills/` — there is
+  no folder above it, and the tool is wherever it was unpacked.
 - **from the release zip** — the folder you unpacked it into
 - **from a clone of the repository** — the repository root
 

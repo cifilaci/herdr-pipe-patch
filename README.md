@@ -88,9 +88,27 @@ codex plugin add herdr-pipe-patch@herdr-pipe-patch
 codex prefers `.codex-plugin/` when a repository has one and falls back to
 `.claude-plugin/`, so the same two files serve both products. The plugin lands
 in `~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/`, and the agent
-sees the skill namespaced as `herdr-pipe-patch:herdr-pipe-patch`. Both products
-name the plugin's own folder `${CLAUDE_PLUGIN_ROOT}`, so one skill file serves
-both.
+sees the skill namespaced as `herdr-pipe-patch:herdr-pipe-patch`.
+
+The one thing the two do not share is the name of the plugin's own folder.
+Claude Code expands `${CLAUDE_PLUGIN_ROOT}` into the text of the skill; codex
+leaves the text as it is and only exports the variable to hooks. So the skill
+names that folder by its place instead — two levels up from the skill file —
+which is the same folder under both installations.
+
+codex keeps what it installed in the folder named after the version, and it
+does not look at the repository again on its own. After a release, refresh the
+marketplace and install again:
+
+```
+codex plugin marketplace upgrade
+codex plugin add herdr-pipe-patch@herdr-pipe-patch
+```
+
+The folder is named after the plugin's `version` in `.claude-plugin/plugin.json`,
+so **a change that does not bump that version is not picked up** — codex keeps
+the copy it has. The version is bumped with every release for exactly that
+reason.
 
 The skill then walks the agent through the whole flow, and the tool comes with
 it: the script, the patch and the prebuilt patched core.
@@ -377,6 +395,9 @@ herdr-pipe-patch\
     build.rs                            collects the payloads into the binary
     src\main.rs                         the launcher itself
     build.cmd                           copy the files in and rebuild it
+  .claude-plugin\                       what makes this a plugin and a marketplace
+    plugin.json                          the plugin manifest, with the version
+    marketplace.json                     the catalog that lists the plugin
   .github\workflows\release.yml         builds and publishes the release
 ```
 
@@ -389,9 +410,11 @@ launcher\build.cmd
 
 which copies the files into `launcher\tree`, runs `cargo build --release` and
 puts the new `herdr-pipe-patch.exe` back in the folder. The build fails when a
-file in the tree is not carried by the executable, or when one of the files the
-executable carries is missing from the tree: the released zip and the one-file
-form would otherwise differ, and nothing would say so.
+file in the tree is not carried by the executable, when one of the files the
+executable carries is missing from the tree, and when the tree holds no
+payload at all: the released zip and the one-file form would otherwise differ,
+and nothing would say so. The tree is a build artefact — `build.cmd` makes it
+fresh every time, so the check runs on every build.
 
 ### The release
 
@@ -406,17 +429,18 @@ The tag names the herdr-core version the payload was built from: the tag
    read back; the job fails if it does not grant the SIDs,
 5. stamps the release's version into the README and the skill — the
    one-file executable carries both, so it has to happen before it is built,
-6. checks that the plugin manifest carries the same version,
+6. checks that the plugin manifest is not behind the release,
 7. builds the one-file executable, and checks that what it carries names that
    version too,
-8. publishes the tool zip, the executable, the patched core on its own, and a
+8. checks that the executable and the package carry the same files,
+9. publishes the tool zip, the executable, the patched core on its own, and a
    `.sha256` beside every asset.
 
 The plugin manifest (`.claude-plugin/plugin.json`) carries the payload's
 version, and a plugin that declares a `version` stays on it until the manifest
 changes — so the people who installed the plugin keep the tool the manifest
 names. **Bump it and commit before you tag.** The release checks it: a tag
-whose manifest still carries another version fails the job, rather than
+whose manifest still carries an older version fails the job, rather than
 publishing a release that quietly leaves the plugin behind.
 
 `.claude-plugin/marketplace.json` is what makes the repository a marketplace:
