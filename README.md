@@ -106,9 +106,9 @@ codex plugin add herdr-pipe-patch@herdr-pipe-patch
 ```
 
 The folder is named after the plugin's `version` in `.claude-plugin/plugin.json`,
-so **a change that does not bump that version is not picked up** — codex keeps
-the copy it has. The version is bumped with every release for exactly that
-reason.
+so a new version lands in a new folder and the old one is dropped. The version
+is bumped with every release, and the release fails if the manifest still
+carries an older one.
 
 The skill then walks the agent through the whole flow, and the tool comes with
 it: the script, the patch and the prebuilt patched core.
