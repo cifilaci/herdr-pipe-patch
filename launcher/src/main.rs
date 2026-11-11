@@ -49,6 +49,8 @@ fn main() -> ExitCode {
         }
     }
 
+    let args = normalise_accounts(&args);
+
     let dir = match unpack() {
         Ok(dir) => dir,
         Err(e) => {
@@ -79,16 +81,62 @@ fn main() -> ExitCode {
     }
 }
 
+/// PowerShell refuses a parameter that is given twice, so "-Account A
+/// -Account B" fails before the script sees it. The names are joined into one
+/// comma-separated value instead, which the script splits.
+fn normalise_accounts(args: &[OsString]) -> Vec<OsString> {
+    let mut names: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i].to_string_lossy().eq_ignore_ascii_case("-Account") {
+            i += 1;
+            while i < args.len() && !args[i].to_string_lossy().starts_with('-') {
+                names.push(args[i].to_string_lossy().to_string());
+                i += 1;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    if names.len() < 2 {
+        return args.to_vec();
+    }
+    let joined = names.join(",");
+    let mut out: Vec<OsString> = Vec::new();
+    let mut emitted = false;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i].to_string_lossy().eq_ignore_ascii_case("-Account") {
+            i += 1;
+            while i < args.len() && !args[i].to_string_lossy().starts_with('-') {
+                i += 1;
+            }
+            if !emitted {
+                out.push(OsString::from("-Account"));
+                out.push(OsString::from(joined.clone()));
+                emitted = true;
+            }
+            continue;
+        }
+        out.push(args[i].clone());
+        i += 1;
+    }
+    out
+}
+
 /// Where the tool is unpacked: a marker directory under LOCALAPPDATA, so a new
 /// build of this executable unpacks afresh and an old one keeps working.
 fn unpack() -> std::io::Result<PathBuf> {
     let root = local_app_data().join("herdr-pipe-patch").join(marker());
-    let fresh = PAYLOAD_VERSIONS
-        .first()
-        .map(|version| root.join("payload").join(version).join("herdr-core.exe"));
-    if fresh.map(|path| path.is_file()).unwrap_or(false) {
+    // The tree counts as fresh only when every file it should hold is there,
+    // byte for byte. A file that is merely present - truncated, half-written -
+    // is not a working tool, and it must not be left there.
+    if tree_marker(&root).as_deref() == Some(marker().as_str()) {
         remove_older_copies(&root);
         return Ok(root);
+    }
+    if root.exists() {
+        let _ = fs::remove_dir_all(&root);
     }
 
     for (relative, bytes) in EXTRA_FILES {
@@ -156,10 +204,34 @@ fn marker() -> String {
         feed(bytes);
     }
     for version in PAYLOAD_VERSIONS {
-        let (core, _, _) = payload_files(version);
+        let (core, checksum, build) = payload_files(version);
         feed(core);
+        feed(checksum.as_bytes());
+        feed(build.as_bytes());
     }
     format!("{:016x}", hash)
+}
+
+/// The same marker, computed from the files that are on disk. It is what says
+/// whether the unpacked tree is intact.
+fn tree_marker(root: &Path) -> Option<String> {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+    };
+    for (relative, _) in EXTRA_FILES {
+        feed(&fs::read(root.join(relative)).ok()?);
+    }
+    for version in PAYLOAD_VERSIONS {
+        let dir = root.join("payload").join(version);
+        feed(&fs::read(dir.join("herdr-core.exe")).ok()?);
+        feed(&fs::read(dir.join("herdr-core.exe.sha256")).ok()?);
+        feed(&fs::read(dir.join("BUILD.txt")).ok()?);
+    }
+    Some(format!("{:016x}", hash))
 }
 
 fn local_app_data() -> PathBuf {

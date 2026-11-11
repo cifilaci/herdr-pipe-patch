@@ -24,7 +24,7 @@
 
 .EXAMPLE
   .\herdr-pipe-patch.ps1 status
-  .\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline -Account CodexSandboxOnline
+  .\herdr-pipe-patch.ps1 apply -Account CodexSandboxOffline,CodexSandboxOnline
   .\herdr-pipe-patch.ps1 apply -DryRun
   .\herdr-pipe-patch.ps1 unpatch
 #>
@@ -410,6 +410,32 @@ function Get-LocalGroupSids {
     return $sids.ToArray()
 }
 
+function Get-AccountNames {
+    <#
+      The account names that were asked for, as a flat list.
+
+      -Account is a [string[]], and PowerShell has two surprises here:
+
+      - an unsupplied [string[]] is $null, so @($Account).Count is 1 - not 0.
+        A test for "no account was named" must look at $null, not at the count
+        of an array wrapped around it;
+      - a parameter may not be given twice ("-Account A -Account B" is
+        rejected), so the names arrive either as separate elements or as one
+        element carrying a comma. Both are split here, so both forms work.
+    #>
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($a in @($Account)) {
+        if ($null -eq $a) { continue }
+        foreach ($n in ($a -split ',')) {
+            $t = $n.Trim()
+            if ($t) { $names.Add($t) }
+        }
+    }
+    # ToArray, not @($list): PowerShell throws "Argument types do not match"
+    # when a generic list goes inside @(), in 5.1 and in 7 alike.
+    return $names.ToArray()
+}
+
 function Resolve-TargetSids {
     $wanted = New-Object System.Collections.Generic.List[string]
     $groupSids = @(Get-LocalGroupSids)
@@ -426,7 +452,8 @@ function Resolve-TargetSids {
         }
     }
 
-    foreach ($a in $Account) {
+    $accountNames = @(Get-AccountNames)
+    foreach ($a in $accountNames) {
         $sid = Resolve-AccountSid $a
         if (-not $sid) {
             # The account does not exist here yet - usually the elevated sandbox
@@ -444,7 +471,7 @@ function Resolve-TargetSids {
     # The pattern is the fallback, not the answer: when accounts were named
     # and none of them exists here, granting the pattern's accounts instead
     # would be granting something nobody asked for.
-    if ($wanted.Count -eq 0 -and @($Account).Count -eq 0) {
+    if ($wanted.Count -eq 0 -and $accountNames.Count -eq 0) {
         foreach ($n in @(Get-LocalAccountNames)) {
             if ($n -like $AccountPattern) {
                 $sid = Resolve-AccountSid $n
@@ -1009,21 +1036,32 @@ function Update-CodexSkill {
     #>
     param([string] $Hc, [string] $Agent = 'codex')
     $skill = Get-CodexSkill -Hc $Hc -Agent $Agent
-    if (-not $skill.Exists) { return $false }
-    if (-not $skill.Wrapper) {
-        Write-Fail 'the installed skill has no recognisable head; not rewriting it.'
-        return $false
-    }
-    $head = $skill.Wrapper
-    if ($skill.MentionsWinHc) {
-        # The installed guide carries the WSL head. The head for this side is
-        # in the tool's own assets folder.
-        $windowsHead = Join-Path (Join-Path $script:ToolRoot 'assets') 'herdr-skill-wrapper.md'
-        if (Test-Path -LiteralPath $windowsHead) {
-            $head = ([IO.File]::ReadAllText($windowsHead) -replace "`r`n", "`n").Trim()
-            Write-Note 'the installed guide carried the WSL head; the head for this side replaces it'
-        } else {
-            Write-Warn 'the installed guide carries the WSL head and the head for this side is not beside the tool; the head is kept as it is'
+    # The head for this side is in the tool's own assets folder. It is what a
+    # missing guide is written from, and what replaces the WSL head.
+    $ownHead = Join-Path (Join-Path $script:ToolRoot 'assets') 'herdr-skill-wrapper.md'
+    if (-not $skill.Exists) {
+        # There is no guide to take a head from, so one is written from scratch.
+        if (-not (Test-Path -LiteralPath $ownHead)) {
+            Write-Fail 'the guide head is not beside the tool; no guide was written.'
+            return $false
+        }
+        $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n").Trim()
+        Write-Note "there is no $Agent guide yet; it is written from the head beside the tool"
+    } else {
+        if (-not $skill.Wrapper) {
+            Write-Fail 'the installed skill has no recognisable head; not rewriting it.'
+            return $false
+        }
+        $head = $skill.Wrapper
+        if ($skill.MentionsWinHc) {
+            # The installed guide carries the WSL head. The head for this side is
+            # in the tool's own assets folder.
+            if (Test-Path -LiteralPath $ownHead) {
+                $head = ([IO.File]::ReadAllText($ownHead) -replace "`r`n", "`n").Trim()
+                Write-Note 'the installed guide carried the WSL head; the head for this side replaces it'
+            } else {
+                Write-Warn 'the installed guide carries the WSL head and the head for this side is not beside the tool; the head is kept as it is'
+            }
         }
     }
     $app = Get-HerdrAppPath
@@ -1034,10 +1072,15 @@ function Update-CodexSkill {
     if (-not $hcText -or -not $appText) { Write-Fail 'a manual could not be read; not rewriting the skill.'; return $false }
 
     $new = $head + ($hcText -replace "`r`n", "`n").Trim() + "`n---`n`n" + ($appText -replace "`r`n", "`n").Trim() + "`n"
-    $backup = $skill.Path + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
-    Copy-Item -LiteralPath $skill.Path -Destination $backup -Force
+    $folder = Split-Path -Parent $skill.Path
+    if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+    if (Test-Path -LiteralPath $skill.Path) {
+        $backup = $skill.Path + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $skill.Path -Destination $backup -Force
+        Write-Note "saved the old skill as $backup"
+    }
     [IO.File]::WriteAllText($skill.Path, $new, [System.Text.UTF8Encoding]::new($false))
-    Write-Note "saved the old skill as $backup"
+    Write-Note "wrote the guide into $($skill.Path)"
     return $true
 }
 
@@ -1052,7 +1095,7 @@ function Get-SkillProblems {
     $problems = New-Object System.Collections.Generic.List[string]
     Write-Note "skill           : $(if ($Skill.Exists) { $Skill.Path } else { 'not installed' })"
     if (-not $Skill.Exists) {
-        $problems.Add("$Agent has no herdr skill installed")
+        $problems.Add("the $Agent skill is not installed")
         return $problems
     }
     Write-Note "gate            : $(if ($Skill.GatesHerdrEnv) { 'HERDR_ENV (the 0.9.5 guide)' } elseif ($Skill.GatesTerminal) { 'HC_TERMINAL_ID' } else { 'unknown' })"
@@ -1076,53 +1119,65 @@ function Show-Codex {
     Write-Log 'codex' 'step'
     $problems = New-Object System.Collections.Generic.List[string]
 
+    # These are set further down, inside the branch that reads the codex
+    # settings, but the result uses them either way, so they have a value
+    # before it.
+    $accounts = @()
+    $service = $null
+    $daemon = $null
+
     $cmd = Get-Command codex -ErrorAction SilentlyContinue
     if (-not $cmd) {
-        Write-Note 'codex           : not on PATH - nothing to check on the codex side'
-        return [pscustomobject]@{ Problems = $problems; Accounts = @(); Service = $null; Skill = $null; Daemon = $null }
-    }
-    $version = (Invoke-Native -File $cmd.Source -Arguments @('--version')).Text
-    Write-Note "codex           : $version"
+        # The codex settings cannot be read without codex, but the guides are
+        # files: a Claude Code session must not be left unchecked because
+        # codex happens to be absent.
+        Write-Note 'codex           : not on PATH - the codex settings cannot be read'
+    } else {
+        $version = (Invoke-Native -File $cmd.Source -Arguments @('--version')).Text
+        Write-Note "codex           : $version"
 
-    $sandboxMode = Get-CodexConfigValue -Section '' -Key 'sandbox_mode'
-    $windowsSandbox = Get-CodexConfigValue -Section 'windows' -Key 'sandbox'
-    $daemonAutoStart = Get-CodexConfigValue -Section 'features' -Key 'daemon_auto_start'
-    Write-Note "config.toml     : $(Join-Path (Get-CodexHome) 'config.toml')"
-    Write-Note "sandbox_mode    : $(if ($sandboxMode) { $sandboxMode } else { 'not set' })"
-    Write-Note "windows.sandbox : $(if ($windowsSandbox) { $windowsSandbox } else { 'not set' })"
-    Write-Note "daemon_auto_start: $(if ($daemonAutoStart) { $daemonAutoStart } else { 'not set' })"
+        $sandboxMode = Get-CodexConfigValue -Section '' -Key 'sandbox_mode'
+        $windowsSandbox = Get-CodexConfigValue -Section 'windows' -Key 'sandbox'
+        $daemonAutoStart = Get-CodexConfigValue -Section 'features' -Key 'daemon_auto_start'
+        Write-Note "config.toml     : $(Join-Path (Get-CodexHome) 'config.toml')"
+        Write-Note "sandbox_mode    : $(if ($sandboxMode) { $sandboxMode } else { 'not set' })"
+        Write-Note "windows.sandbox : $(if ($windowsSandbox) { $windowsSandbox } else { 'not set' })"
+        Write-Note "daemon_auto_start: $(if ($daemonAutoStart) { $daemonAutoStart } else { 'not set' })"
 
-    if ($windowsSandbox -ne 'elevated') {
-        $problems.Add("codex runs its sandbox as '$windowsSandbox'; only the elevated sandbox runs as a separate account, and only that one can be granted")
-    }
-    if ($daemonAutoStart -ne 'false') {
-        $problems.Add('codex daemon_auto_start is not false: a shared app-server daemon freezes the pane environment')
-    }
-
-    $accounts = @(Get-CodexSandboxAccounts)
-    $service = Get-CodexSandboxService
-    Write-Note ('sandbox accounts: ' + $(if ($accounts.Count -gt 0) { ($accounts | ForEach-Object { $_.Name }) -join ', ' } else { 'none' }))
-    Write-Note ('sandbox service : ' + $(if ($service) { "$($service.Name) ($($service.Status))" } else { 'not installed' }))
-    if ($windowsSandbox -eq 'elevated' -and ($accounts.Count -eq 0 -or -not $service)) {
-        $problems.Add('the elevated sandbox is not provisioned: run `codex sandbox setup --elevated --current-user` in an elevated terminal')
-    }
-
-    $ungranted = @()
-    foreach ($a in $accounts) {
-        if ($GrantSids.Count -gt 0 -and -not $GrantSids.Contains($a.SID)) { $ungranted += $a.Name }
-    }
-    if ($ungranted.Count -gt 0) {
-        $problems.Add("the pipe does not grant the sandbox accounts: $($ungranted -join ', ')")
-    }
-
-    $daemon = Get-CodexDaemonState
-    if ($daemon) {
-        Write-Note "app-server      : $($daemon.status)"
-        if ($daemon.status -eq 'running') {
-            Write-Warn 'a shared app-server daemon is running. Codex sessions started without --no-daemon use it, and it froze the pane environment before.'
+        if ($windowsSandbox -ne 'elevated') {
+            $problems.Add("codex runs its sandbox as '$windowsSandbox'; only the elevated sandbox runs as a separate account, and only that one can be granted")
         }
+        if ($daemonAutoStart -ne 'false') {
+            $problems.Add('codex daemon_auto_start is not false: a shared app-server daemon freezes the pane environment')
+        }
+
+        $accounts = @(Get-CodexSandboxAccounts)
+        $service = Get-CodexSandboxService
+        Write-Note ('sandbox accounts: ' + $(if ($accounts.Count -gt 0) { ($accounts | ForEach-Object { $_.Name }) -join ', ' } else { 'none' }))
+        Write-Note ('sandbox service : ' + $(if ($service) { "$($service.Name) ($($service.Status))" } else { 'not installed' }))
+        if ($windowsSandbox -eq 'elevated' -and ($accounts.Count -eq 0 -or -not $service)) {
+            $problems.Add('the elevated sandbox is not provisioned: run `codex sandbox setup --elevated --current-user` in an elevated terminal')
+        }
+
+        $ungranted = @()
+        foreach ($a in $accounts) {
+            if ($GrantSids.Count -gt 0 -and -not $GrantSids.Contains($a.SID)) { $ungranted += $a.Name }
+        }
+        if ($ungranted.Count -gt 0) {
+            $problems.Add("the pipe does not grant the sandbox accounts: $($ungranted -join ', ')")
+        }
+
+        $daemon = Get-CodexDaemonState
+        if ($daemon) {
+            Write-Note "app-server      : $($daemon.status)"
+            if ($daemon.status -eq 'running') {
+                Write-Warn 'a shared app-server daemon is running. Codex sessions started without --no-daemon use it, and it froze the pane environment before.'
+            }
+        }
+
     }
 
+    # The codex guide is a file too: it is checked either way.
     $skill = Get-CodexSkill -Hc $Hc -Agent 'codex'
     foreach ($problem in (Get-SkillProblems -Agent 'codex' -Skill $skill)) { $problems.Add($problem) }
 
@@ -1158,19 +1213,24 @@ function Repair-Codex {
     $daemonAutoStart = Get-CodexConfigValue -Section 'features' -Key 'daemon_auto_start'
 
     Write-Log 'codex plan' 'step'
+    # The codex settings and the guides are separate jobs: a machine without
+    # ~/.codex/config.toml still needs its Herdr guide, and a Claude Code
+    # session needs its own.
     if (-not $haveConfig) {
-        Write-Note 'there is no ~/.codex/config.toml - codex is not set up here, nothing to change'
-        return
-    }
-    if ($haveAccounts -and $windowsSandbox -ne 'elevated') {
-        Write-Note "config.toml: windows.sandbox -> elevated (now '$windowsSandbox')"
-    }
-    if ($daemonAutoStart -ne 'false') {
-        Write-Note 'config.toml: features.daemon_auto_start -> false'
+        Write-Note 'there is no ~/.codex/config.toml - the codex settings are left alone'
+    } else {
+        if ($haveAccounts -and $windowsSandbox -ne 'elevated') {
+            Write-Note "config.toml: windows.sandbox -> elevated (now '$windowsSandbox')"
+        }
+        if ($daemonAutoStart -ne 'false') {
+            Write-Note 'config.toml: features.daemon_auto_start -> false'
+        }
     }
     foreach ($agent in @('codex', 'claude')) {
         $skill = Get-CodexSkill -Hc $Hc -Agent $agent
-        if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc)) {
+        if (-not $skill.Exists) {
+            Write-Note "$agent skill: not installed - it is written from the manuals the installed binaries print"
+        } elseif (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc) {
             Write-Note "$agent skill: rebuild it from the manuals the installed binaries print"
         }
     }
@@ -1185,19 +1245,21 @@ function Repair-Codex {
     }
     if ($DryRun) { Write-Log 'dry run: the codex side was not changed' 'step'; return }
 
-    if ($haveAccounts -and $windowsSandbox -ne 'elevated') {
-        if (Set-CodexConfigValue -Section 'windows' -Key 'sandbox' -Value '"elevated"') {
-            Write-Note 'windows.sandbox is now elevated'
+    if ($haveConfig) {
+        if ($haveAccounts -and $windowsSandbox -ne 'elevated') {
+            if (Set-CodexConfigValue -Section 'windows' -Key 'sandbox' -Value '"elevated"') {
+                Write-Note 'windows.sandbox is now elevated'
+            }
         }
-    }
-    if ($daemonAutoStart -ne 'false') {
-        if (Set-CodexConfigValue -Section 'features' -Key 'daemon_auto_start' -Value 'false') {
-            Write-Note 'daemon_auto_start is now false'
+        if ($daemonAutoStart -ne 'false') {
+            if (Set-CodexConfigValue -Section 'features' -Key 'daemon_auto_start' -Value 'false') {
+                Write-Note 'daemon_auto_start is now false'
+            }
         }
     }
     foreach ($agent in @('codex', 'claude')) {
         $skill = Get-CodexSkill -Hc $Hc -Agent $agent
-        if ($skill.Exists -and (-not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc)) {
+        if (-not $skill.Exists -or -not $skill.HcUpToDate -or -not $skill.AppUpToDate -or $skill.MentionsWinHc) {
             if (Update-CodexSkill -Hc $Hc -Agent $agent) { Write-Note "the $agent skill now carries the current manuals" }
         }
     }
@@ -1329,7 +1391,7 @@ switch ($Command) {
         } else {
             Write-Note 'the core is patched. Nothing to do.'
         }
-        foreach ($p in $codex.Problems) { Write-Note ('codex: ' + $p) }
+        foreach ($p in $codex.Problems) { Write-Note $p }
         exit 0
     }
 
@@ -1497,7 +1559,7 @@ switch ($Command) {
             foreach ($x in $grant) { if (-not $granted.Contains($x)) { $problems += "the pipe does not grant $x" } }
         }
         if (-not $s.Status) { $problems += 'no core is running' }
-        foreach ($p in $codex.Problems) { $problems += "codex: $p" }
+        foreach ($p in $codex.Problems) { $problems += $p }
         if ($problems.Count -gt 0) {
             foreach ($p in $problems) { Write-Fail $p }
             exit 1

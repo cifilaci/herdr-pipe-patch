@@ -23,8 +23,7 @@ processes, with separate pipes and separate terminals:
 ```sh
 win-hc ls                       # find it: an address like t1y, agent "codex"
 win-hc get t1y                  # what it is: cwd, title, status, turn
-win-hc send t1y "the question"  # paste the text
-win-hc keys t1y enter           # submit it
+win-hc send t1y "the question"  # paste the text and submit it
 win-hc read t1y                 # read the answer
 ```
 

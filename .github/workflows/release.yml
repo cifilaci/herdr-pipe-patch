@@ -133,6 +133,7 @@ jobs:
                   'install-skill.ps1', 'install-skill-wsl.sh', 'herdr-pipe-patch.exe',
                   'patches\herdr-core-pipe-extra-sids.patch',
                   "payload\$version\herdr-core.exe", "payload\$version\herdr-core.exe.sha256",
+                  "payload\$version\BUILD.txt",
                   'scripts\probe-core.ps1', 'skills\herdr-pipe-patch\SKILL.md',
                   'assets\herdr-skill-wrapper.md', 'assets\herdr-skill-wrapper-wsl.md',
                   'assets\win-hc')) {
@@ -140,6 +141,16 @@ jobs:
                   throw "the package has no $expected - it is incomplete"
               }
           }
+          # The README names the release it belongs to. A release for another
+          # version must not ship a README that names this one. Every mention
+          # of a version in the README is a mention of the release itself, so
+          # the version is substituted in the staged copy.
+          $readme = Join-Path $tool 'README.md'
+          $readmeText = [IO.File]::ReadAllText($readme)
+          $readmeText = $readmeText.Replace('0.1.20', $version)
+          [IO.File]::WriteAllText($readme, $readmeText, [System.Text.UTF8Encoding]::new($false))
+          Write-Host "the README now names $version"
+
           # The zip's root is the tool itself, so unpacking it into a folder
           # leaves the tool in that folder - which is what the README tells a
           # consumer to do.

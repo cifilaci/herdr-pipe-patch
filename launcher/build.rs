@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 const EXTRA: &[&str] = &[
     "herdr-pipe-patch.ps1",
     "README.md",
+    "LICENSE",
     "install-skill.ps1",
     "install-skill-wsl.sh",
     "patches/herdr-core-pipe-extra-sids.patch",
@@ -93,11 +94,13 @@ fn main() {
     for (i, relative) in EXTRA.iter().enumerate() {
         let path = assets.join(relative);
         if !path.is_file() {
-            println!(
-                "cargo:warning=the launcher will not carry {}: it is not in tree",
+            // A warning would ship an executable that is missing a file the
+            // README promises. The build fails instead.
+            panic!(
+                "the launcher will not carry {}: it is not in tree. \
+                 Copy it into launcher/tree, or take it out of EXTRA.",
                 relative
             );
-            continue;
         }
         consts.push_str(&format!(
             "const EXTRA_{i}: &[u8] = include_bytes!({});\n",
@@ -116,10 +119,51 @@ fn main() {
     out.push_str("];\n");
     println!("cargo:warning=the launcher carries {carried} files besides the payload");
 
+    // Everything in the tree has to be carried. A file that lands in the tree
+    // but not in the executable would be in the released zip and missing from
+    // the one-file form, and nothing would say so.
+    let mut in_tree: Vec<String> = Vec::new();
+    collect_files(&assets, &assets, &mut in_tree).expect("cannot read the tree");
+    in_tree.retain(|p| !p.starts_with("payload/"));
+    for relative in &in_tree {
+        if !EXTRA.contains(&relative.as_str()) {
+            panic!(
+                "{} is in the tree but not in EXTRA, so the executable would not carry it. \
+                 Add it to EXTRA, or take it out of the tree.",
+                relative
+            );
+        }
+    }
+    for relative in EXTRA {
+        if !in_tree.iter().any(|p| p == relative) {
+            panic!("{} is in EXTRA but not in the tree.", relative);
+        }
+    }
+
     let out_file = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("payloads.rs");
     fs::write(&out_file, out).expect("cannot write the generated file list");
 
     println!("cargo:rerun-if-changed=tree");
+}
+
+/// Every file under `root`, as a path relative to it, with '/' separators.
+fn collect_files(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|e| e.path());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(root, &path, out)?;
+        } else {
+            let relative = path
+                .strip_prefix(root)
+                .expect("a path under the root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push(relative);
+        }
+    }
+    Ok(())
 }
 
 /// A Rust string literal for a path, so `include_bytes!` can be given an

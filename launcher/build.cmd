@@ -30,6 +30,9 @@ copy /y herdr-pipe-patch.ps1 launcher\tree\ > nul
 if errorlevel 1 goto :copyfailed
 copy /y README.md launcher\tree\ > nul
 if errorlevel 1 goto :copyfailed
+rem The README points at the licence, so the executable has to carry it too.
+copy /y LICENSE launcher\tree\ > nul
+if errorlevel 1 goto :copyfailed
 copy /y install-skill.ps1 launcher\tree\ > nul
 if errorlevel 1 goto :copyfailed
 copy /y install-skill-wsl.sh launcher\tree\ > nul
